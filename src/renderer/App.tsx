@@ -1,39 +1,38 @@
-import { MemoryRouter as Router, Routes, Route } from 'react-router-dom';
-import icon from '../../assets/icon.svg';
+import {
+  MemoryRouter as Router,
+  Routes,
+  Route,
+  Outlet,
+  NavLink,
+  useLocation,
+} from 'react-router-dom';
+import Setting from './Setting';
+import Billing from './Billing';
+import Dashboard from './Dashboard';
+import 'tailwindcss/tailwind.css';
 import './App.css';
 
-const Hello = () => {
+const Navbar = () => {
+  const navLink = ['Dashboard', 'Billing', 'Setting'];
+  const navs = navLink.map((name) => (
+    <NavLink className="py-2" to={`/${name.toLowerCase()}`}>
+      {name}
+    </NavLink>
+  )); // bg-current
   return (
-    <div>
-      <div className="Hello">
-        <img width="200px" alt="icon" src={icon} />
-      </div>
-      <h1>electron-react-boilerplate</h1>
-      <div className="Hello">
-        <a
-          href="https://electron-react-boilerplate.js.org/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <button type="button">
-            <span role="img" aria-label="books">
-              📚
-            </span>
-            Read our docs
-          </button>
-        </a>
-        <a
-          href="https://github.com/sponsors/electron-react-boilerplate"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <button type="button">
-            <span role="img" aria-label="books">
-              🙏
-            </span>
-            Donate
-          </button>
-        </a>
+    <div className="flex flex-col justify-start w-1/5 bg-gray-800 h-screen">
+      {navs}
+    </div>
+  );
+};
+
+const Base = () => {
+  return (
+    <div className="flex">
+      <Navbar />
+      <div className="p-5 w-full">
+        <h1 className="p-2 bg-slate-900">Hello World!</h1>
+        <Outlet />
       </div>
     </div>
   );
@@ -43,7 +42,11 @@ export default function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Hello />} />
+        <Route path="/" element={<Base />}>
+          <Route path="dashboard" element={<Dashboard />} />
+          <Route path="billing" element={<Billing />} />
+          <Route path="setting" element={<Setting />} />
+        </Route>
       </Routes>
     </Router>
   );

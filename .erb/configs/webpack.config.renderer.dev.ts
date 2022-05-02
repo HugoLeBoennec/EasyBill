@@ -79,7 +79,19 @@ const configuration: webpack.Configuration = {
       },
       {
         test: /\.s?css$/,
-        use: ['style-loader', 'css-loader', 'sass-loader'],
+        use: ['style-loader', 'css-loader', 'sass-loader', {
+          // style, css, sass loaders...
+          loader: 'postcss-loader',
+          options: {
+            postcssOptions: {
+              plugins:
+                [
+                  require('tailwindcss'),
+                  require('autoprefixer'),
+                ]
+            }
+          }
+        }],
         exclude: /\.module\.s?(c|a)ss$/,
       },
       // Fonts

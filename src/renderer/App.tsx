@@ -13,6 +13,7 @@ import Company from './pages/yourCompany';
 import Dev from './Devtest';
 // import 'tailwindcss/tailwind.css';
 import './App.css';
+import { LocaleProvider } from './LocaleContext';
 
 const Navbar = () => {
   const navLink = ['Dashboard', 'Billing', 'Setting', 'Test'];
@@ -44,17 +45,21 @@ const Base = () => {
 };
 
 export default function App() {
+  const countryCode = navigator.language;
+
   return (
     <Router>
-      <Routes>
-        <Route path="/" element={<Base />}>
-          <Route path="test" element={<Dev />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="billing" element={<Billing />} />
-          <Route path="setting" element={<Setting />} />
-          <Route path="setting/company" element={<Company />} />
-        </Route>
-      </Routes>
+      <LocaleProvider locale={countryCode}>
+        <Routes>
+          <Route path="/" element={<Base />}>
+            <Route path="test" element={<Dev />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="billing" element={<Billing />} />
+            <Route path="setting" element={<Setting />} />
+            <Route path="setting/company" element={<Company />} />
+          </Route>
+        </Routes>
+      </LocaleProvider>
     </Router>
   );
 }

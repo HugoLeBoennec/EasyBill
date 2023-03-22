@@ -1,5 +1,8 @@
+import { useContext } from 'react';
 import { Link } from 'react-router-dom';
+import { LocaleContext } from './LocaleContext';
 import { InputText, InputBase } from './components/inputs';
+
 import fr from './locales/fr';
 import en from './locales/en';
 
@@ -8,15 +11,12 @@ const toId = (text: string) => {
 };
 
 const Setting = () => {
-  // const router = useRouter();
-  // const { locale } = router;
-  const locale = 'fr';
+  const locale = useContext(LocaleContext);
   const c = locale === 'fr' ? fr.common : en.common;
   const t = locale === 'fr' ? fr.settingPage : en.settingPage;
 
   return (
     <div className="flex flex-col text-black">
-      <Link to="./company">Company Setting</Link>
       <InputBase label={t.company} id={`inp_${toId(t.company)}_base`}>
         <InputText
           id={`inp_${toId(t.company)}`}
@@ -24,7 +24,8 @@ const Setting = () => {
           placeholder="Google"
         />
       </InputBase>
-      <InputBase label={t.company} id={`inp_${toId(t.address)}_base`}>
+      <Link to="./company">⚙️ Company Setting</Link>
+      <InputBase label={t.address} id={`inp_${toId(t.address)}_base`}>
         <InputText
           id={`inp_${toId(t.address)}`}
           type="text"

@@ -7,10 +7,7 @@ export default {
   },
   dashboardPage: {
     pageName: 'Dashboard',
-    startDate: 'Date de début',
-    endDate: 'Date de fin',
-    otherTitle: 'Autre titre',
-    studio: 'Studio',
+    revenue: 'Revenue',
   },
   settingPage: {
     pageName: 'Setting',

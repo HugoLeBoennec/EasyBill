@@ -7,15 +7,12 @@ export default {
   },
   dashboardPage: {
     pageName: 'Dashboard',
-    startDate: 'Date de début',
-    endDate: 'Date de fin',
-    otherTitle: 'Autre titre',
-    studio: 'Studio',
+    revenue: "Chiffre d'affaire",
   },
   settingPage: {
     pageName: 'Paramètre',
     company: "Nom de l'entreprise",
-    address: 'Address',
+    address: 'Adresse',
     zip: 'Code Postal',
     city: 'Ville',
     phone: 'Numero de téléphone',

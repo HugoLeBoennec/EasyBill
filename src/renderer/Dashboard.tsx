@@ -1,4 +1,10 @@
+import { useContext } from 'react';
+import { LocaleContext } from './LocaleContext';
+
 import PieComp from './rechartComp/PieComp';
+
+import fr from './locales/fr';
+import en from './locales/en';
 
 interface CardProps {
   title: string;
@@ -19,13 +25,17 @@ const Card = ({ title, subtitle, data }: CardProps): JSX.Element => {
 };
 
 const Dashboard = () => {
+  const locale = useContext(LocaleContext);
+  const c = locale === 'fr' ? fr.common : en.common;
+  const t = locale === 'fr' ? fr.dashboardPage : en.dashboardPage;
+
   return (
     <div className="flex flex-col justify-start pt-3">
       <div className="flex flex-row justify-between">
-        <Card title="Chiffre d'affaire" subtitle="Sur 50j" data="50 M€" />
-        <Card title="Chiffre d'affaire" subtitle="Sur 100j" data="200 M€" />
+        <Card title={t.revenue} subtitle="Sur 50j" data="50 M€" />
+        <Card title={t.revenue} subtitle="Sur 100j" data="200 M€" />
       </div>
-      <Card title="Chiffre d'affaire" subtitle="Sur 100j" data="200 M€" />
+      <Card title={t.revenue} subtitle="Sur 100j" data="200 M€" />
       <PieComp />
     </div>
   );

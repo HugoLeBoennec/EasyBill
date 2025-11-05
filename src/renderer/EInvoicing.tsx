@@ -1,47 +1,49 @@
-import { useContext, useState } from 'react';
+import { useContext, useState, useEffect } from 'react';
 import { LocaleContext } from './LocaleContext';
 import { InputText, InputCheckBox, InputRadio } from './components/inputs';
 import fr from './locales/fr';
 import en from './locales/en';
-
-type Platform = 'chorus-pro' | 'tiime' | 'pennylane' | 'sage' | 'other';
-type InvoiceFormat = 'facturx' | 'ubl' | 'cii';
-type Environment = 'production' | 'qualification';
-
-interface EInvoicingSettings {
-  enabled: boolean;
-  platform: Platform;
-  apiEndpoint: string;
-  clientId: string;
-  clientSecret: string;
-  environment: Environment;
-  defaultFormat: InvoiceFormat;
-  autoSend: boolean;
-  offlineMode: boolean;
-}
+import {
+  loadSettings,
+  saveSettings as persistSettings,
+  validateSettings,
+  settingsStore,
+  type EInvoicingSettings,
+  type Platform,
+  type InvoiceFormat,
+  type Environment,
+} from '../services/einvoicing/storage';
 
 const EInvoicing = () => {
   const locale = useContext(LocaleContext);
   const t = locale === 'fr' ? fr.eInvoicingPage : en.eInvoicingPage;
 
   // State for settings
-  const [settings, setSettings] = useState<EInvoicingSettings>({
-    enabled: false,
-    platform: 'chorus-pro',
-    apiEndpoint: '',
-    clientId: '',
-    clientSecret: '',
-    environment: 'qualification',
-    defaultFormat: 'facturx',
-    autoSend: false,
-    offlineMode: true,
-  });
-
+  const [settings, setSettings] = useState<EInvoicingSettings>(() => loadSettings());
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<'success' | 'failed' | null>(
-    null
-  );
+  const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Load settings on mount
+  useEffect(() => {
+    const loaded = loadSettings();
+    setSettings(loaded);
+  }, []);
+
+  // Auto-populate API endpoint when platform or environment changes
+  useEffect(() => {
+    if (settings.platform !== 'other') {
+      const endpoint = settingsStore.getDefaultEndpoint(
+        settings.platform,
+        settings.environment
+      );
+      if (endpoint && endpoint !== settings.apiEndpoint) {
+        setSettings((prev) => ({ ...prev, apiEndpoint: endpoint }));
+      }
+    }
+  }, [settings.platform, settings.environment]);
 
   const handleTestConnection = async () => {
     setTesting(true);
@@ -55,9 +57,40 @@ const EInvoicing = () => {
   };
 
   const handleSave = () => {
-    // TODO: Save to electron store or database
-    console.log('Saving settings:', settings);
-    alert(t.saved);
+    // Clear previous errors and success message
+    setValidationErrors([]);
+    setSaveSuccess(false);
+
+    // Validate settings
+    const validation = validateSettings(settings);
+
+    if (!validation.valid) {
+      setValidationErrors(validation.errors);
+      return;
+    }
+
+    // Save settings
+    try {
+      persistSettings(settings);
+      setSaveSuccess(true);
+
+      // Hide success message after 3 seconds
+      setTimeout(() => {
+        setSaveSuccess(false);
+      }, 3000);
+    } catch (error) {
+      setValidationErrors([
+        error instanceof Error ? error.message : 'Failed to save settings',
+      ]);
+    }
+  };
+
+  const handlePlatformChange = (platform: Platform) => {
+    setSettings((prev) => ({ ...prev, platform }));
+  };
+
+  const handleFormatChange = (format: InvoiceFormat) => {
+    setSettings((prev) => ({ ...prev, defaultFormat: format }));
   };
 
   return (
@@ -110,6 +143,63 @@ const EInvoicing = () => {
         <p className="ml-8 mt-1 text-sm text-gray-500">{t.enabledHelp}</p>
       </div>
 
+      {/* Validation Errors */}
+      {validationErrors.length > 0 && (
+        <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-400 rounded">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <svg
+                className="h-5 w-5 text-red-400"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-red-800">
+                Validation Errors
+              </h3>
+              <div className="mt-2 text-sm text-red-700">
+                <ul className="list-disc pl-5 space-y-1">
+                  {validationErrors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Success Message */}
+      {saveSuccess && (
+        <div className="mb-6 p-4 bg-green-50 border-l-4 border-green-400 rounded">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <svg
+                className="h-5 w-5 text-green-400"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+            <div className="ml-3">
+              <p className="text-sm font-medium text-green-800">{t.saved}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Settings Form (only shown if enabled) */}
       {settings.enabled && (
         <>
@@ -121,10 +211,13 @@ const EInvoicing = () => {
             <div className="space-y-3">
               {/* Chorus Pro */}
               <label className="flex items-start cursor-pointer p-3 border-2 rounded-lg hover:bg-gray-50 transition-colors">
-                <InputRadio
-                  id="platform-chorus-pro"
+                <input
+                  type="radio"
                   name="platform"
                   value="chorus-pro"
+                  checked={settings.platform === 'chorus-pro'}
+                  onChange={() => handlePlatformChange('chorus-pro')}
+                  className="mt-1 w-4 h-4"
                 />
                 <div className="ml-3 flex-1">
                   <div className="flex items-center">
@@ -141,10 +234,13 @@ const EInvoicing = () => {
 
               {/* Tiime */}
               <label className="flex items-start cursor-pointer p-3 border-2 rounded-lg hover:bg-gray-50 transition-colors">
-                <InputRadio
-                  id="platform-tiime"
+                <input
+                  type="radio"
                   name="platform"
                   value="tiime"
+                  checked={settings.platform === 'tiime'}
+                  onChange={() => handlePlatformChange('tiime')}
+                  className="mt-1 w-4 h-4"
                 />
                 <div className="ml-3 flex-1">
                   <span className="font-medium text-gray-900">{t.tiime}</span>
@@ -154,10 +250,13 @@ const EInvoicing = () => {
 
               {/* Pennylane */}
               <label className="flex items-start cursor-pointer p-3 border-2 rounded-lg hover:bg-gray-50 transition-colors">
-                <InputRadio
-                  id="platform-pennylane"
+                <input
+                  type="radio"
                   name="platform"
                   value="pennylane"
+                  checked={settings.platform === 'pennylane'}
+                  onChange={() => handlePlatformChange('pennylane')}
+                  className="mt-1 w-4 h-4"
                 />
                 <div className="ml-3 flex-1">
                   <span className="font-medium text-gray-900">
@@ -169,7 +268,14 @@ const EInvoicing = () => {
 
               {/* Sage */}
               <label className="flex items-start cursor-pointer p-3 border-2 rounded-lg hover:bg-gray-50 transition-colors">
-                <InputRadio id="platform-sage" name="platform" value="sage" />
+                <input
+                  type="radio"
+                  name="platform"
+                  value="sage"
+                  checked={settings.platform === 'sage'}
+                  onChange={() => handlePlatformChange('sage')}
+                  className="mt-1 w-4 h-4"
+                />
                 <div className="ml-3 flex-1">
                   <span className="font-medium text-gray-900">{t.sage}</span>
                   <p className="text-sm text-gray-500">{t.sageDesc}</p>
@@ -178,7 +284,14 @@ const EInvoicing = () => {
 
               {/* Other */}
               <label className="flex items-start cursor-pointer p-3 border-2 rounded-lg hover:bg-gray-50 transition-colors">
-                <InputRadio id="platform-other" name="platform" value="other" />
+                <input
+                  type="radio"
+                  name="platform"
+                  value="other"
+                  checked={settings.platform === 'other'}
+                  onChange={() => handlePlatformChange('other')}
+                  className="mt-1 w-4 h-4"
+                />
                 <div className="ml-3 flex-1">
                   <span className="font-medium text-gray-900">{t.other}</span>
                   <p className="text-sm text-gray-500">{t.otherDesc}</p>
@@ -306,10 +419,13 @@ const EInvoicing = () => {
             <div className="space-y-3">
               {/* Factur-X */}
               <label className="flex items-start cursor-pointer p-3 border-2 rounded-lg hover:bg-gray-50 transition-colors">
-                <InputRadio
-                  id="format-facturx"
+                <input
+                  type="radio"
                   name="format"
                   value="facturx"
+                  checked={settings.defaultFormat === 'facturx'}
+                  onChange={() => handleFormatChange('facturx')}
+                  className="mt-1 w-4 h-4"
                 />
                 <div className="ml-3 flex-1">
                   <div className="flex items-center">
@@ -326,7 +442,14 @@ const EInvoicing = () => {
 
               {/* UBL */}
               <label className="flex items-start cursor-pointer p-3 border-2 rounded-lg hover:bg-gray-50 transition-colors">
-                <InputRadio id="format-ubl" name="format" value="ubl" />
+                <input
+                  type="radio"
+                  name="format"
+                  value="ubl"
+                  checked={settings.defaultFormat === 'ubl'}
+                  onChange={() => handleFormatChange('ubl')}
+                  className="mt-1 w-4 h-4"
+                />
                 <div className="ml-3 flex-1">
                   <span className="font-medium text-gray-900">{t.ubl}</span>
                   <p className="text-sm text-gray-500">{t.ublDesc}</p>
@@ -335,7 +458,14 @@ const EInvoicing = () => {
 
               {/* CII */}
               <label className="flex items-start cursor-pointer p-3 border-2 rounded-lg hover:bg-gray-50 transition-colors">
-                <InputRadio id="format-cii" name="format" value="cii" />
+                <input
+                  type="radio"
+                  name="format"
+                  value="cii"
+                  checked={settings.defaultFormat === 'cii'}
+                  onChange={() => handleFormatChange('cii')}
+                  className="mt-1 w-4 h-4"
+                />
                 <div className="ml-3 flex-1">
                   <span className="font-medium text-gray-900">{t.cii}</span>
                   <p className="text-sm text-gray-500">{t.ciiDesc}</p>

@@ -10,6 +10,7 @@ import Setting from './Setting';
 import Billing from './Billing';
 import Dashboard from './Dashboard';
 import Company from './pages/yourCompany';
+import EInvoicing from './EInvoicing';
 import Dev from './Devtest';
 // import 'tailwindcss/tailwind.css';
 import './App.css';
@@ -57,6 +58,7 @@ export default function App() {
             <Route path="billing" element={<Billing />} />
             <Route path="setting" element={<Setting />} />
             <Route path="setting/company" element={<Company />} />
+            <Route path="setting/einvoicing" element={<EInvoicing />} />
           </Route>
         </Routes>
       </LocaleProvider>

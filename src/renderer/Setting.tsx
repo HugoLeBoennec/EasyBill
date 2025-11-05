@@ -24,7 +24,25 @@ const Setting = () => {
           placeholder="Google"
         />
       </InputBase>
-      <Link to="./company">⚙️ Company Setting</Link>
+      <div className="flex flex-col gap-2 my-4">
+        <Link
+          to="./company"
+          className="p-3 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+        >
+          ⚙️ Company Setting
+        </Link>
+        <Link
+          to="./einvoicing"
+          className="p-3 bg-blue-50 hover:bg-blue-100 border-2 border-blue-200 rounded-md transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <span>📄 Electronic Invoicing (2026)</span>
+            <span className="px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded">
+              ACTION REQUIRED
+            </span>
+          </div>
+        </Link>
+      </div>
       <InputBase label={t.address} id={`inp_${toId(t.address)}_base`}>
         <InputText
           id={`inp_${toId(t.address)}`}

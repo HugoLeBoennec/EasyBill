@@ -22,13 +22,12 @@ jobs:
 
       - name: npm install
         run: |
-          npm install --legacy-peer-deps
+          npm install
 
       - name: npm test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          ESLINT_USE_FLAT_CONFIG: false
         run: |
           npm run package
           npm run lint

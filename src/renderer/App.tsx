@@ -8,25 +8,38 @@ import {
 } from 'react-router-dom';
 import Setting from './Setting';
 import Billing from './Billing';
-import Dashboard from './Dashboard';
+import DashboardNew from './DashboardNew';
 import Company from './pages/yourCompany';
+import EInvoicing from './EInvoicing';
+import Invoices from './Invoices';
+import Customers from './Customers';
 import Dev from './Devtest';
 // import 'tailwindcss/tailwind.css';
 import './App.css';
 import { LocaleProvider } from './LocaleContext';
 
 const Navbar = () => {
-  const navLink = ['Dashboard', 'Billing', 'Setting', 'Test'];
+  const navLink = ['Dashboard', 'Invoices', 'Customers', 'Billing', 'Setting', 'Test'];
   const navs = navLink.map((name) => (
     <NavLink
-      className="py-3 px-2 text-white mx-1 hover:bg-slate-300 active:bg-white"
+      key={name}
+      className={({ isActive }) =>
+        `py-3 px-2 mx-1 transition-colors ${
+          isActive
+            ? 'bg-blue-600 text-white'
+            : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+        }`
+      }
       to={`/${name.toLowerCase()}`}
     >
       {name}
     </NavLink>
-  )); // bg-current
+  ));
   return (
     <div className="flex flex-col justify-start w-1/5 bg-gray-800 h-screen">
+      <div className="p-4 text-white font-bold text-xl border-b border-gray-700">
+        EasyBill
+      </div>
       {navs}
     </div>
   );
@@ -34,10 +47,9 @@ const Navbar = () => {
 
 const Base = () => {
   return (
-    <div className="flex">
+    <div className="flex h-screen">
       <Navbar />
-      <div className="p-5 w-full">
-        <h1 className="p-2 bg-slate-900 text-white">Hello World!</h1>
+      <div className="flex-1 overflow-y-auto bg-gray-50">
         <Outlet />
       </div>
     </div>
@@ -52,11 +64,15 @@ export default function App() {
       <LocaleProvider locale={countryCode}>
         <Routes>
           <Route path="/" element={<Base />}>
+            <Route index element={<DashboardNew />} />
             <Route path="test" element={<Dev />} />
-            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="dashboard" element={<DashboardNew />} />
+            <Route path="invoices" element={<Invoices />} />
+            <Route path="customers" element={<Customers />} />
             <Route path="billing" element={<Billing />} />
             <Route path="setting" element={<Setting />} />
             <Route path="setting/company" element={<Company />} />
+            <Route path="setting/einvoicing" element={<EInvoicing />} />
           </Route>
         </Routes>
       </LocaleProvider>

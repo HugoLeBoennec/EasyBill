@@ -28,6 +28,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          ESLINT_USE_FLAT_CONFIG: false
         run: |
           npm run package
           npm run lint

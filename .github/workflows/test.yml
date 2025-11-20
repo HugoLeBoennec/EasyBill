@@ -20,9 +20,25 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: npm install
-        run: |
-          npm install
+      - name: Cache Electron binaries
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron/Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      - name: Install dependencies with retry
+        uses: nick-fields/retry@v2
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: npm ci
 
       - name: npm test
         env:

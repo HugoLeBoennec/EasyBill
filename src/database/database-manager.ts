@@ -9,6 +9,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
 import type { DatabaseInfo, DatabaseStats } from './types';
+// Import SQL schema as a string (Vite handles this automatically with ?raw suffix)
+import schemaSql from './schema.sql?raw';
 
 /**
  * Database Manager Singleton
@@ -79,15 +81,7 @@ export class DatabaseManager {
       throw new Error('Database not initialized');
     }
 
-    // Read schema file
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    if (!fs.existsSync(schemaPath)) {
-      throw new Error(`Schema file not found at: ${schemaPath}`);
-    }
-
-    const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-
-    // Execute schema in a transaction
+    // Execute schema (imported as string at build time)
     this.db.exec(schemaSql);
 
     console.log('Database schema applied successfully');

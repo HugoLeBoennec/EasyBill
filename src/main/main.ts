@@ -12,7 +12,6 @@ import path from 'path';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
-import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import MenuBuilder from './menu';
 import { resolveHtmlPath, getAssetPath } from './util';
 import { initializeIPC, closeDatabase } from './ipc-handlers';
@@ -40,14 +39,22 @@ const isDevelopment =
   process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD === 'true';
 
 const installExtensions = async () => {
-  const forceDownload = !!process.env.UPGRADE_EXTENSIONS;
+  try {
+    // Dynamically import electron-devtools-installer
+    const installer = await import('electron-devtools-installer');
+    const installExtension = installer.default;
+    const { REACT_DEVELOPER_TOOLS } = installer;
 
-  return installExtension(REACT_DEVELOPER_TOOLS, {
-    loadExtensionOptions: { allowFileAccess: true },
-    forceDownload,
-  })
-    .then((name) => console.log(`Added Extension: ${name}`))
-    .catch((err) => console.log('An error occurred: ', err));
+    const forceDownload = !!process.env.UPGRADE_EXTENSIONS;
+
+    const name = await installExtension(REACT_DEVELOPER_TOOLS, {
+      loadExtensionOptions: { allowFileAccess: true },
+      forceDownload,
+    });
+    console.log(`Added Extension: ${name}`);
+  } catch (err) {
+    console.log('DevTools extension installation skipped:', err);
+  }
 };
 
 const createWindow = async () => {

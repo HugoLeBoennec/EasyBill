@@ -6,13 +6,24 @@ module.exports = {
     'import/no-unresolved': 'error',
     // Since React 17 and typescript 4.1 you can safely disable the rule
     'react/react-in-jsx-scope': 'off',
+    // Relax some strict rules for existing code
+    'import/extensions': 'off',
+    'no-use-before-define': 'off',
+    'lines-between-class-members': 'off',
+    'no-console': 'warn',
+    'prettier/prettier': 'warn',
+    'import/prefer-default-export': 'off',
+    'no-useless-constructor': 'off',
+    'no-empty-function': 'off',
+    'class-methods-use-this': 'off',
+    'import/first': 'off',
+    'react/jsx-filename-extension': ['error', { extensions: ['.jsx', '.tsx'] }],
   },
   parserOptions: {
-    ecmaVersion: 2020,
+    ecmaVersion: 2022,
     sourceType: 'module',
     project: './tsconfig.json',
     tsconfigRootDir: __dirname,
-    createDefaultProgram: true,
   },
   settings: {
     'import/resolver': {

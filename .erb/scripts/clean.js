@@ -1,4 +1,4 @@
-import rimraf from 'rimraf';
+import { rimrafSync } from 'rimraf';
 import webpackPaths from '../configs/webpack.paths.ts';
 import process from 'process';
 
@@ -12,6 +12,6 @@ const commandMap = {
 args.forEach((x) => {
   const pathToRemove = commandMap[x];
   if (pathToRemove !== undefined) {
-    rimraf.sync(pathToRemove);
+    rimrafSync(pathToRemove);
   }
 });

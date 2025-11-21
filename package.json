@@ -30,6 +30,9 @@
     ]
   },
   "build": {
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
     "productName": "ElectronReact",
     "appId": "org.erb.ElectronReact",
     "asar": true,

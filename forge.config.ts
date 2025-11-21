@@ -12,7 +12,7 @@ const config: ForgeConfig = {
     asar: true,
   },
   rebuildConfig: {
-    onlyModules: [], // Skip rebuilding native modules in development
+    // Let Electron Forge rebuild better-sqlite3 for Electron
   },
   makers: [
     new MakerSquirrel({}),

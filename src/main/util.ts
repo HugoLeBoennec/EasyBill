@@ -1,18 +1,23 @@
-/* eslint import/prefer-default-export: off, import/no-mutable-exports: off */
-import { URL } from 'url';
+/* eslint import/prefer-default-export: off */
 import path from 'path';
+import { app } from 'electron';
 
-export let resolveHtmlPath: (htmlFileName: string) => string;
+// Vite sets these globals for us
+declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
+declare const MAIN_WINDOW_VITE_NAME: string;
 
-if (process.env.NODE_ENV === 'development') {
-  const port = process.env.PORT || 1212;
-  resolveHtmlPath = (htmlFileName: string) => {
-    const url = new URL(`http://localhost:${port}`);
-    url.pathname = htmlFileName;
-    return url.href;
-  };
-} else {
-  resolveHtmlPath = (htmlFileName: string) => {
-    return `file://${path.resolve(__dirname, '../renderer/', htmlFileName)}`;
-  };
-}
+export const resolveHtmlPath = (htmlFileName: string) => {
+  // In Electron Forge with Vite, MAIN_WINDOW_VITE_DEV_SERVER_URL is set in development
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    return MAIN_WINDOW_VITE_DEV_SERVER_URL;
+  }
+  // In production, serve from the built renderer directory
+  return `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)}`;
+};
+
+export const getAssetPath = (...paths: string[]): string => {
+  const RESOURCES_PATH = app.isPackaged
+    ? path.join(process.resourcesPath, 'assets')
+    : path.join(__dirname, '../../assets');
+  return path.join(RESOURCES_PATH, ...paths);
+};

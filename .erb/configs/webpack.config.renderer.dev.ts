@@ -161,7 +161,6 @@ const configuration: webpack.Configuration = {
     __filename: false,
   },
 
-  // @ts-ignore
   devServer: {
     port,
     compress: true,
@@ -173,7 +172,7 @@ const configuration: webpack.Configuration = {
     historyApiFallback: {
       verbose: true,
     },
-    onBeforeSetupMiddleware() {
+    setupMiddlewares: (middlewares) => {
       console.log('Starting Main Process...');
       spawn('npm', ['run', 'start:main'], {
         shell: true,
@@ -182,6 +181,7 @@ const configuration: webpack.Configuration = {
       })
         .on('close', (code: number) => process.exit(code!))
         .on('error', (spawnError) => console.error(spawnError));
+      return middlewares;
     },
   },
 };

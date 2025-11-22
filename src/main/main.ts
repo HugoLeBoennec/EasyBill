@@ -21,9 +21,6 @@ if (require('electron-squirrel-startup')) {
   app.quit();
 }
 
-// Vite sets this global for the preload script
-declare const MAIN_WINDOW_PRELOAD_VITE_ENTRY: string;
-
 export default class AppUpdater {
   constructor() {
     log.transports.file.level = 'info';
@@ -61,7 +58,7 @@ const createWindow = async () => {
     height: 800,
     icon: getAssetPath('icon.png'),
     webPreferences: {
-      preload: MAIN_WINDOW_PRELOAD_VITE_ENTRY,
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },

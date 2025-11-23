@@ -7,7 +7,6 @@ import {
   useLocation,
 } from 'react-router-dom';
 import Setting from './Setting';
-import Billing from './Billing';
 import DashboardNew from './DashboardNew';
 import Company from './pages/yourCompany';
 import EInvoicing from './EInvoicing';
@@ -19,7 +18,7 @@ import './App.css';
 import { LocaleProvider } from './LocaleContext';
 
 const Navbar = () => {
-  const navLink = ['Dashboard', 'Invoices', 'Customers', 'Billing', 'Setting', 'Test'];
+  const navLink = ['Dashboard', 'Invoices', 'Customers', 'Setting', 'Test'];
   const navs = navLink.map((name) => (
     <NavLink
       key={name}
@@ -69,7 +68,6 @@ export default function App() {
             <Route path="dashboard" element={<DashboardNew />} />
             <Route path="invoices" element={<Invoices />} />
             <Route path="customers" element={<Customers />} />
-            <Route path="billing" element={<Billing />} />
             <Route path="setting" element={<Setting />} />
             <Route path="setting/company" element={<Company />} />
             <Route path="setting/einvoicing" element={<EInvoicing />} />

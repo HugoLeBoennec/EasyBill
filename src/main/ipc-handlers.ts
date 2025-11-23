@@ -10,10 +10,13 @@ import type {
   Invoice,
   InvoiceLine,
   Party,
+  Quote,
+  QuoteLine,
   EInvoiceMetadata,
   EInvoiceQueue,
   InvoiceFilter,
   PartyFilter,
+  QuoteFilter,
   NewRecord,
   UpdateRecord,
 } from '../database/types';
@@ -31,6 +34,7 @@ export async function initializeIPC(): Promise<void> {
   // Register all IPC handlers
   registerInvoiceHandlers();
   registerPartyHandlers();
+  registerQuoteHandlers();
   registerEInvoiceHandlers();
   registerDatabaseHandlers();
 
@@ -199,6 +203,16 @@ function registerInvoiceHandlers(): void {
       return { success: false, error: error.message };
     }
   });
+
+  // Get financial metrics
+  ipcMain.handle('invoice:getFinancialMetrics', async (_, paymentTermsDays: number = 30) => {
+    try {
+      const metrics = getDB().invoices.getFinancialMetrics(paymentTermsDays);
+      return { success: true, data: metrics };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
 }
 
 // ============================================================================
@@ -282,6 +296,133 @@ function registerPartyHandlers(): void {
     try {
       const exists = getDB().parties.existsBySiret(siret, excludeId);
       return { success: true, data: exists };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+}
+
+// ============================================================================
+// QUOTE HANDLERS
+// ============================================================================
+
+function registerQuoteHandlers(): void {
+  // Create quote
+  ipcMain.handle('quote:create', async (_, quote: NewRecord<Quote>) => {
+    try {
+      const id = getDB().quotes.create(quote);
+      return { success: true, data: id };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get quote by ID
+  ipcMain.handle('quote:get', async (_, id: number) => {
+    try {
+      const quote = getDB().quotes.findById(id);
+      return { success: true, data: quote };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get complete quote with customer
+  ipcMain.handle('quote:getComplete', async (_, id: number) => {
+    try {
+      const quote = getDB().quotes.getComplete(id);
+      return { success: true, data: quote };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // List quotes
+  ipcMain.handle('quote:list', async (_, filter?: QuoteFilter) => {
+    try {
+      const quotes = getDB().quotes.getAllComplete(filter);
+      const count = getDB().quotes.count(filter);
+      return { success: true, data: { quotes, count } };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Update quote
+  ipcMain.handle('quote:update', async (_, id: number, updates: UpdateRecord<Quote>) => {
+    try {
+      const success = getDB().quotes.update(id, updates);
+      return { success, data: success };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Delete quote
+  ipcMain.handle('quote:delete', async (_, id: number) => {
+    try {
+      const success = getDB().quotes.delete(id);
+      return { success, data: success };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get next quote number
+  ipcMain.handle('quote:getNextNumber', async (_, prefix?: string) => {
+    try {
+      const number = getDB().quotes.getNextNumber(prefix);
+      return { success: true, data: number };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Create quote line
+  ipcMain.handle('quote:createLine', async (_, line: NewRecord<QuoteLine>) => {
+    try {
+      const id = getDB().quotes.createLine(line);
+      return { success: true, data: id };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get quote lines
+  ipcMain.handle('quote:getLines', async (_, quoteId: number) => {
+    try {
+      const lines = getDB().quotes.getLines(quoteId);
+      return { success: true, data: lines };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Update quote line
+  ipcMain.handle('quote:updateLine', async (_, id: number, updates: UpdateRecord<QuoteLine>) => {
+    try {
+      const success = getDB().quotes.updateLine(id, updates);
+      return { success, data: success };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Delete quote line
+  ipcMain.handle('quote:deleteLine', async (_, id: number) => {
+    try {
+      const success = getDB().quotes.deleteLine(id);
+      return { success, data: success };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get recent quotes
+  ipcMain.handle('quote:getRecent', async (_, limit: number = 10) => {
+    try {
+      const quotes = getDB().quotes.getRecent(limit);
+      return { success: true, data: quotes };
     } catch (error: any) {
       return { success: false, error: error.message };
     }

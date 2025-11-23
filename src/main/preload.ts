@@ -9,10 +9,13 @@ import type {
   Invoice,
   InvoiceLine,
   Party,
+  Quote,
+  QuoteLine,
   EInvoiceMetadata,
   EInvoiceQueue,
   InvoiceFilter,
   PartyFilter,
+  QuoteFilter,
   NewRecord,
   UpdateRecord,
 } from '../database/types';
@@ -71,6 +74,9 @@ const invoiceAPI = {
 
   getRecent: (limit?: number): Promise<IPCResponse<Invoice[]>> =>
     ipcRenderer.invoke('invoice:getRecent', limit),
+
+  getFinancialMetrics: (paymentTermsDays?: number): Promise<IPCResponse<any>> =>
+    ipcRenderer.invoke('invoice:getFinancialMetrics', paymentTermsDays),
 };
 
 // Party API
@@ -98,6 +104,46 @@ const partyAPI = {
 
   checkSiret: (siret: string, excludeId?: number): Promise<IPCResponse<boolean>> =>
     ipcRenderer.invoke('party:checkSiret', siret, excludeId),
+};
+
+// Quote API
+const quoteAPI = {
+  create: (quote: NewRecord<Quote>): Promise<IPCResponse<number>> =>
+    ipcRenderer.invoke('quote:create', quote),
+
+  get: (id: number): Promise<IPCResponse<Quote>> =>
+    ipcRenderer.invoke('quote:get', id),
+
+  getComplete: (id: number): Promise<IPCResponse<any>> =>
+    ipcRenderer.invoke('quote:getComplete', id),
+
+  list: (filter?: QuoteFilter): Promise<IPCResponse<{ quotes: Quote[]; count: number }>> =>
+    ipcRenderer.invoke('quote:list', filter),
+
+  update: (id: number, updates: UpdateRecord<Quote>): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('quote:update', id, updates),
+
+  delete: (id: number): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('quote:delete', id),
+
+  getNextNumber: (prefix?: string): Promise<IPCResponse<string>> =>
+    ipcRenderer.invoke('quote:getNextNumber', prefix),
+
+  // Line operations
+  createLine: (line: NewRecord<QuoteLine>): Promise<IPCResponse<number>> =>
+    ipcRenderer.invoke('quote:createLine', line),
+
+  getLines: (quoteId: number): Promise<IPCResponse<QuoteLine[]>> =>
+    ipcRenderer.invoke('quote:getLines', quoteId),
+
+  updateLine: (id: number, updates: UpdateRecord<QuoteLine>): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('quote:updateLine', id, updates),
+
+  deleteLine: (id: number): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('quote:deleteLine', id),
+
+  getRecent: (limit?: number): Promise<IPCResponse<Quote[]>> =>
+    ipcRenderer.invoke('quote:getRecent', limit),
 };
 
 // E-Invoice API
@@ -146,6 +192,7 @@ const databaseAPI = {
 contextBridge.exposeInMainWorld('electron', {
   invoice: invoiceAPI,
   party: partyAPI,
+  quote: quoteAPI,
   einvoice: einvoiceAPI,
   database: databaseAPI,
 });
@@ -154,6 +201,7 @@ contextBridge.exposeInMainWorld('electron', {
 export type ElectronAPI = {
   invoice: typeof invoiceAPI;
   party: typeof partyAPI;
+  quote: typeof quoteAPI;
   einvoice: typeof einvoiceAPI;
   database: typeof databaseAPI;
 };

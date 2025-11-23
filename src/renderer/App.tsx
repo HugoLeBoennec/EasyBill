@@ -11,6 +11,7 @@ import DashboardNew from './DashboardNew';
 import Company from './pages/yourCompany';
 import EInvoicing from './EInvoicing';
 import Invoices from './Invoices';
+import InvoiceForm from './InvoiceForm';
 import Customers from './Customers';
 import Dev from './Devtest';
 // import 'tailwindcss/tailwind.css';
@@ -67,6 +68,7 @@ export default function App() {
             <Route path="test" element={<Dev />} />
             <Route path="dashboard" element={<DashboardNew />} />
             <Route path="invoices" element={<Invoices />} />
+            <Route path="invoices/new" element={<InvoiceForm />} />
             <Route path="customers" element={<Customers />} />
             <Route path="setting" element={<Setting />} />
             <Route path="setting/company" element={<Company />} />

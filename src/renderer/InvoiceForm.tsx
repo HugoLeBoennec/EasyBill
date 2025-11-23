@@ -153,6 +153,8 @@ const InvoiceForm = () => {
         payment_status: 'unpaid' as const,
         payment_terms_days: paymentTerms,
         notes: notes || undefined,
+        buyer_reference: undefined,
+        purchase_order_ref: undefined,
       };
 
       const invoiceResp = await window.electron.invoice.create(invoiceData);

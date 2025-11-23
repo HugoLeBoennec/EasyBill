@@ -39,13 +39,13 @@ const InputText = ({
 }: InputBaseProps) => {
   return (
     <input
-      // id={id}
-      // name={name}
+      id={id}
+      name={name}
       className="placeholder:italic placeholder:text-slate-400 hover:placeholder:text-blue-400 hover:border-blue-300 block bg-white w-full border border-slate-300 rounded-md py-2 px-3 shadow-sm focus:outline-none focus:border-sky-500 focus:ring-sky-500 focus:ring-1 sm:text-sm"
       type={type}
       placeholder={placeholder}
-      // onChange={onChange}
-      // defaultValue={value}
+      onChange={onChange}
+      value={value}
     />
   );
 };

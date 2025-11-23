@@ -18,14 +18,22 @@ const Customers = () => {
     party_type: 'customer',
     legal_name: '',
     trading_name: '',
+    legal_form: '',
+    siren: '',
     siret: '',
     vat_number: '',
     address_line1: '',
+    address_line2: '',
     postal_code: '',
     city: '',
+    state_region: '',
     country_code: 'FR',
-    email: '',
+    contact_name: '',
     phone: '',
+    email: '',
+    website: '',
+    electronic_address: '',
+    electronic_address_scheme: '',
     active: 1,
   });
 
@@ -79,14 +87,22 @@ const Customers = () => {
         party_type: 'customer',
         legal_name: '',
         trading_name: '',
+        legal_form: '',
+        siren: '',
         siret: '',
         vat_number: '',
         address_line1: '',
+        address_line2: '',
         postal_code: '',
         city: '',
+        state_region: '',
         country_code: 'FR',
-        email: '',
+        contact_name: '',
         phone: '',
+        email: '',
+        website: '',
+        electronic_address: '',
+        electronic_address_scheme: '',
         active: 1,
       });
 
@@ -120,7 +136,17 @@ const Customers = () => {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+
+    // Auto-calculate SIREN from SIRET (first 9 digits)
+    if (name === 'siret' && value.length >= 9) {
+      setFormData((prev) => ({
+        ...prev,
+        [name]: value,
+        siren: value.substring(0, 9)
+      }));
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
+    }
   };
 
   if (loading) {

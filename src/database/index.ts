@@ -9,11 +9,13 @@ export * from './database-manager';
 export { InvoiceRepository } from './repositories/invoice-repository';
 export { EInvoiceRepository } from './repositories/einvoice-repository';
 export { PartyRepository } from './repositories/party-repository';
+export { QuoteRepository } from './repositories/quote-repository';
 
 import { databaseManager } from './database-manager';
 import { InvoiceRepository } from './repositories/invoice-repository';
 import { EInvoiceRepository } from './repositories/einvoice-repository';
 import { PartyRepository } from './repositories/party-repository';
+import { QuoteRepository } from './repositories/quote-repository';
 
 /**
  * Database service with all repositories
@@ -24,12 +26,14 @@ export class DatabaseService {
   public invoices: InvoiceRepository;
   public einvoices: EInvoiceRepository;
   public parties: PartyRepository;
+  public quotes: QuoteRepository;
 
   private constructor() {
     const db = databaseManager.getConnection();
     this.invoices = new InvoiceRepository(db);
     this.einvoices = new EInvoiceRepository(db);
     this.parties = new PartyRepository(db);
+    this.quotes = new QuoteRepository(db);
   }
 
   /**

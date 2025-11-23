@@ -415,4 +415,84 @@ export class InvoiceRepository {
 
     return `${prefix}-${year}-001`;
   }
+
+  // ========================================================================
+  // DASHBOARD METRICS
+  // ========================================================================
+
+  /**
+   * Count sent invoices
+   */
+  countSent(): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM invoices
+      WHERE status = 'sent'
+    `);
+    const result = stmt.get() as { count: number };
+    return result.count;
+  }
+
+  /**
+   * Count signed invoices
+   */
+  countSigned(): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM invoices
+      WHERE is_signed = 1
+    `);
+    const result = stmt.get() as { count: number };
+    return result.count;
+  }
+
+  /**
+   * Get financial metrics for dashboard
+   * Returns amount awaiting payment based on payment terms
+   */
+  getFinancialMetrics(paymentTermsDays: number = 30): {
+    amount_awaiting_payment: number;
+    awaiting_count: number;
+    overdue_amount: number;
+    overdue_count: number;
+    payment_terms_days: number;
+  } {
+    // Calculate awaiting payment (sent but not paid, not yet overdue)
+    const awaitingStmt = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(total_amount - COALESCE(paid_amount, 0)), 0) as amount,
+        COUNT(*) as count
+      FROM invoices
+      WHERE status = 'sent'
+        AND payment_status != 'paid'
+        AND date(invoice_date, '+' || COALESCE(payment_terms_days, ?) || ' days') >= date('now')
+    `);
+    const awaitingResult = awaitingStmt.get(paymentTermsDays) as {
+      amount: number;
+      count: number;
+    };
+
+    // Calculate overdue (past payment terms date)
+    const overdueStmt = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(total_amount - COALESCE(paid_amount, 0)), 0) as amount,
+        COUNT(*) as count
+      FROM invoices
+      WHERE status = 'sent'
+        AND payment_status != 'paid'
+        AND date(invoice_date, '+' || COALESCE(payment_terms_days, ?) || ' days') < date('now')
+    `);
+    const overdueResult = overdueStmt.get(paymentTermsDays) as {
+      amount: number;
+      count: number;
+    };
+
+    return {
+      amount_awaiting_payment: awaitingResult.amount,
+      awaiting_count: awaitingResult.count,
+      overdue_amount: overdueResult.amount,
+      overdue_count: overdueResult.count,
+      payment_terms_days: paymentTermsDays,
+    };
+  }
 }

@@ -30,6 +30,17 @@ export interface Invoice {
   status: InvoiceStatus;
   payment_status?: PaymentStatus;
 
+  // Payment Terms
+  payment_terms_days?: number; // Default 30 days
+
+  // Signature (flexible for future implementation)
+  signature_type?: SignatureType;
+  signature_data?: string; // JSON with signature details
+  is_signed?: number; // 0 or 1
+  signed_at?: string;
+  signed_by?: string;
+  signature_file_path?: string;
+
   // Notes
   notes?: string;
   buyer_reference?: string;
@@ -371,6 +382,80 @@ export interface ComplianceDashboard {
 }
 
 // ============================================================================
+// QUOTES TYPES
+// ============================================================================
+
+export interface Quote {
+  id?: number;
+  quote_number: string;
+  quote_date: string;
+  valid_until?: string;
+
+  // Amounts (in cents)
+  subtotal_amount: number;
+  tax_amount: number;
+  total_amount: number;
+  currency: string;
+
+  // Customer
+  customer_id?: number;
+
+  // Status
+  status: QuoteStatus;
+
+  // Conversion
+  converted_to_invoice_id?: number;
+  converted_at?: string;
+
+  // Notes
+  notes?: string;
+  customer_reference?: string;
+
+  // Timestamps
+  created_at?: string;
+  updated_at?: string;
+  sent_at?: string;
+  accepted_at?: string;
+}
+
+export interface QuoteLine {
+  id?: number;
+  quote_id: number;
+  line_number: number;
+
+  // Item details
+  item_name: string;
+  item_description?: string;
+  item_code?: string;
+
+  // Quantity
+  quantity: number;
+  unit_code: string;
+
+  // Pricing (in cents)
+  unit_price: number;
+  line_amount: number;
+  discount_amount?: number;
+  line_total: number;
+
+  // Tax
+  vat_category: string;
+  vat_rate: number;
+  vat_amount: number;
+
+  // Timestamps
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface QuoteComplete extends Quote {
+  customer_name?: string;
+  customer_siret?: string;
+  customer_email?: string;
+  customer_phone?: string;
+}
+
+// ============================================================================
 // ENUMS AND CONSTANTS
 // ============================================================================
 
@@ -384,6 +469,16 @@ export type InvoiceStatus =
   | 'cancelled';
 
 export type PaymentStatus = 'unpaid' | 'partial' | 'paid' | 'overdue';
+
+export type QuoteStatus =
+  | 'draft'
+  | 'sent'
+  | 'accepted'
+  | 'rejected'
+  | 'expired'
+  | 'converted';
+
+export type SignatureType = 'none' | 'manual' | 'drawn' | 'digital_certificate';
 
 export type PartyType = 'company' | 'customer' | 'supplier';
 
@@ -453,6 +548,16 @@ export interface PartyFilter {
   offset?: number;
 }
 
+export interface QuoteFilter {
+  status?: QuoteStatus;
+  customer_id?: number;
+  from_date?: string;
+  to_date?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
 // ============================================================================
 // UTILITY TYPES
 // ============================================================================
@@ -469,10 +574,21 @@ export interface DatabaseStats {
   total_invoices: number;
   draft_invoices: number;
   finalized_invoices: number;
+  sent_invoices: number; // New
+  signed_invoices: number; // New
+  total_quotes: number; // New
   total_parties: number;
   total_customers: number;
   pending_einvoices: number;
   failed_transmissions: number;
+}
+
+export interface DashboardFinancialMetrics {
+  amount_awaiting_payment: number; // In cents
+  awaiting_count: number;
+  overdue_amount: number; // In cents
+  overdue_count: number;
+  payment_terms_days: number; // Default payment terms
 }
 
 // Helper type for partial updates

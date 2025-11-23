@@ -26,7 +26,7 @@ const EInvoicing = () => {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Load settings on mount
+  // Load settings on mount (only once)
   useEffect(() => {
     const loaded = loadSettings();
     setSettings(loaded);
@@ -61,10 +61,17 @@ const EInvoicing = () => {
     setValidationErrors([]);
     setSaveSuccess(false);
 
+    // Log current settings for debugging
+    console.log('Attempting to save settings:', {
+      ...settings,
+      clientSecret: settings.clientSecret ? `*** (${settings.clientSecret.length} chars)` : '(empty)',
+    });
+
     // Validate settings
     const validation = validateSettings(settings);
 
     if (!validation.valid) {
+      console.error('Validation failed:', validation.errors);
       setValidationErrors(validation.errors);
       return;
     }
@@ -72,6 +79,7 @@ const EInvoicing = () => {
     // Save settings
     try {
       persistSettings(settings);
+      console.log('Settings saved successfully');
       setSaveSuccess(true);
 
       // Hide success message after 3 seconds
@@ -79,6 +87,7 @@ const EInvoicing = () => {
         setSaveSuccess(false);
       }, 3000);
     } catch (error) {
+      console.error('Failed to save:', error);
       setValidationErrors([
         error instanceof Error ? error.message : 'Failed to save settings',
       ]);
@@ -350,11 +359,16 @@ const EInvoicing = () => {
                   id="client-id"
                   type="text"
                   placeholder="your-client-id"
-                  value={settings.clientId}
+                  value={settings.clientId || ''}
                   onChange={(e) =>
                     setSettings({ ...settings, clientId: e.target.value })
                   }
                 />
+                {settings.clientId && (
+                  <p className="mt-1 text-xs text-green-600">
+                    ✓ Client ID entered ({settings.clientId.length} characters)
+                  </p>
+                )}
               </div>
 
               {/* Client Secret */}
@@ -367,7 +381,7 @@ const EInvoicing = () => {
                     id="client-secret"
                     type={showPassword ? 'text' : 'password'}
                     placeholder="••••••••••••••••"
-                    value={settings.clientSecret}
+                    value={settings.clientSecret || ''}
                     onChange={(e) =>
                       setSettings({ ...settings, clientSecret: e.target.value })
                     }
@@ -380,6 +394,11 @@ const EInvoicing = () => {
                     {showPassword ? '🔓' : '🔒'}
                   </button>
                 </div>
+                {settings.clientSecret && (
+                  <p className="mt-1 text-xs text-green-600">
+                    ✓ Client secret entered ({settings.clientSecret.length} characters)
+                  </p>
+                )}
               </div>
 
               {/* Test Connection Button */}

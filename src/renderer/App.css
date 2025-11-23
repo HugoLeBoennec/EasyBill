@@ -8,8 +8,13 @@
 
 @layer base {
   html {
-    font-family: roboto;
-    /* font-family: Proxima Nova, system-ui, sans-serif; */
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply text-gray-900;
   }
 }
 

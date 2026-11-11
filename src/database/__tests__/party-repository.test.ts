@@ -194,6 +194,77 @@ describe('PartyRepository', () => {
     });
   });
 
+  describe('seller legal mentions (migration 003)', () => {
+    const legal = {
+      share_capital: 10000.5,
+      registration_type: 'RCS' as const,
+      registration_city: 'Paris',
+      ape_code: '6201Z',
+      vat_franchise: 1,
+      iban: 'FR7630006000011234567890189',
+      bic: 'BNPAFRPP',
+      default_payment_terms_days: 45,
+      late_penalty_text: 'Pénalités : 10 % par an',
+      recovery_fee_enabled: 0,
+      early_payment_discount_text: 'Escompte de 2 % sous 8 jours',
+    };
+
+    it('applies the defaults when the fields are omitted', () => {
+      const party = repo.findById(repo.create(customer()));
+      expect(party).toMatchObject({
+        share_capital: null,
+        registration_type: null,
+        registration_city: null,
+        ape_code: null,
+        vat_franchise: 0,
+        iban: null,
+        bic: null,
+        default_payment_terms_days: null,
+        late_penalty_text: null,
+        recovery_fee_enabled: 1,
+        early_payment_discount_text: null,
+      });
+    });
+
+    it('round-trips the new fields on create', () => {
+      const id = repo.create(customer({ party_type: 'supplier', ...legal }));
+      expect(repo.findById(id)).toMatchObject(legal);
+    });
+
+    it('round-trips the new fields on update, and exposes them on the company', () => {
+      const company = repo.findCompany();
+      expect(company?.id).toBeDefined();
+      const id = company?.id as number;
+
+      expect(repo.update(id, legal)).toBe(true);
+      expect(repo.findCompany()).toMatchObject(legal);
+
+      // Clearing optional values and switching the flags back
+      expect(
+        repo.update(id, {
+          share_capital: null,
+          iban: null,
+          vat_franchise: 0,
+          recovery_fee_enabled: 1,
+        })
+      ).toBe(true);
+      expect(repo.findCompany()).toMatchObject({
+        share_capital: null,
+        iban: null,
+        vat_franchise: 0,
+        recovery_fee_enabled: 1,
+        ape_code: '6201Z',
+      });
+    });
+
+    it('rejects columns that do not belong to the table', () => {
+      const id = repo.create(customer());
+      expect(() =>
+        repo.update(id, { not_a_column: 1 } as Record<string, number>)
+      ).toThrow(/column/i);
+    });
+  });
+
   describe('existsBySiret', () => {
     it('detects duplicates, optionally ignoring one party', () => {
       const id = repo.create(customer({ siret: '73282932000074' }));

@@ -29,6 +29,7 @@ import type { InvoicePayment } from '../database/types';
 import type {
   InvoiceDraftInput,
   InvoiceDraftLineInput,
+  PaymentInput,
 } from '../database/repositories/invoice-repository';
 import type { InvoiceExportFormat } from './invoice-mapper';
 import type { InvoiceExportResult } from './export-handlers';
@@ -104,6 +105,19 @@ const invoiceAPI = {
 
   getPayments: (invoiceId: number): Promise<IPCResponse<InvoicePayment[]>> =>
     ipcRenderer.invoke('invoice:getPayments', invoiceId),
+
+  recordPayment: (invoiceId: number, payment: PaymentInput): Promise<IPCResponse<number>> =>
+    ipcRenderer.invoke('invoice:recordPayment', invoiceId, payment),
+
+  deletePayment: (paymentId: number): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('invoice:deletePayment', paymentId),
+
+  // Credit notes (avoirs)
+  createCreditNote: (invoiceId: number): Promise<IPCResponse<number>> =>
+    ipcRenderer.invoke('invoice:createCreditNote', invoiceId),
+
+  getCreditNotes: (invoiceId: number): Promise<IPCResponse<Invoice[]>> =>
+    ipcRenderer.invoke('invoice:getCreditNotes', invoiceId),
 
   // Generate the document and save it through a native dialog
   export: (

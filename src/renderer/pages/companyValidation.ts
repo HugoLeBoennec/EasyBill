@@ -8,10 +8,17 @@ import {
   validateSIREN,
   validateSIRET,
 } from '../../services/einvoicing/validation';
-import type { Party } from '../../database/types';
+import type { Party, UpdateRecord } from '../../database/types';
+import {
+  DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT,
+  DEFAULT_LATE_PENALTY_TEXT,
+  DEFAULT_PAYMENT_TERMS_DAYS,
+  formatIban,
+  hasShareCapital,
+} from '../../database/company-legal';
 
-/** Form fields, all kept as strings while editing. */
-export interface CompanyForm {
+/** Text fields, all kept as strings while editing. */
+export interface CompanyTextFields {
   legal_name: string;
   trading_name: string;
   legal_form: string;
@@ -27,6 +34,27 @@ export interface CompanyForm {
   email: string;
   phone: string;
   website: string;
+  // Legal mentions
+  share_capital: string;
+  /** '', 'RCS' or 'RM' */
+  registration_type: string;
+  registration_city: string;
+  ape_code: string;
+  // Bank details
+  iban: string;
+  bic: string;
+  // Payment conditions
+  default_payment_terms_days: string;
+  late_penalty_text: string;
+  early_payment_discount_text: string;
+}
+
+/** The whole form: text fields plus the two switches. */
+export interface CompanyForm extends CompanyTextFields {
+  /** VAT franchise (art. 293 B du CGI) */
+  vat_franchise: boolean;
+  /** Print the 40 EUR fixed recovery fee mention */
+  recovery_fee_enabled: boolean;
 }
 
 export type CompanyErrors = Partial<Record<keyof CompanyForm, string>>;
@@ -47,6 +75,17 @@ export const EMPTY_COMPANY_FORM: CompanyForm = {
   email: '',
   phone: '',
   website: '',
+  share_capital: '',
+  registration_type: '',
+  registration_city: '',
+  ape_code: '',
+  iban: '',
+  bic: '',
+  default_payment_terms_days: String(DEFAULT_PAYMENT_TERMS_DAYS),
+  late_penalty_text: DEFAULT_LATE_PENALTY_TEXT,
+  early_payment_discount_text: DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT,
+  vat_franchise: false,
+  recovery_fee_enabled: true,
 };
 
 /** Name of the placeholder company row inserted by the database schema. */
@@ -121,6 +160,62 @@ export function validateVatNumber(
   return undefined;
 }
 
+/** Error message for an IBAN, or undefined when acceptable (ISO 13616, mod 97). */
+export function validateIban(value: string): string | undefined {
+  const iban = compact(value);
+  if (!iban) return undefined;
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(iban)) {
+    return 'Format invalide : code pays, clé de 2 chiffres puis le numéro de compte (ex. FR76 3000 6000 0112 3456 7890 189).';
+  }
+  if (iban.startsWith('FR') && iban.length !== 27) {
+    return `Un IBAN français comporte 27 caractères (${iban.length} saisis).`;
+  }
+  // Move the 4 first characters to the end, letters -> 10..35, then mod 97
+  const rearranged = iban.slice(4) + iban.slice(0, 4);
+  let remainder = 0;
+  for (const char of rearranged) {
+    const digits = /\d/.test(char) ? char : String(char.charCodeAt(0) - 55);
+    for (const digit of digits) {
+      remainder = (remainder * 10 + Number(digit)) % 97;
+    }
+  }
+  if (remainder !== 1) {
+    return 'IBAN invalide : la clé de contrôle ne correspond pas, vérifiez la saisie.';
+  }
+  return undefined;
+}
+
+/** Error message for a BIC / SWIFT code, or undefined when acceptable. */
+export function validateBic(value: string): string | undefined {
+  const bic = compact(value);
+  if (!bic) return undefined;
+  if (!/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(bic)) {
+    return 'BIC invalide : 8 ou 11 caractères (ex. BNPAFRPP ou BNPAFRPPXXX).';
+  }
+  return undefined;
+}
+
+/** Error message for an APE / NAF code, or undefined when acceptable. */
+export function validateApeCode(value: string): string | undefined {
+  const ape = compact(value);
+  if (!ape) return undefined;
+  if (!/^\d{4}[A-Z]$/.test(ape)) {
+    return 'Code APE invalide : 4 chiffres suivis d\'une lettre (ex. 6201Z).';
+  }
+  return undefined;
+}
+
+/**
+ * Amount typed the French way ("10 000", "1 500,50", "1000.5") as a number.
+ * Returns null when empty and NaN when it is not a positive amount.
+ */
+export function parseAmount(value: string): number | null {
+  const cleaned = value.replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.');
+  if (!cleaned) return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return NaN;
+  return Number(cleaned);
+}
+
 /** Validate the whole form. An empty object means the form is valid. */
 export function validateCompanyForm(form: CompanyForm): CompanyErrors {
   const errors: CompanyErrors = {};
@@ -154,6 +249,32 @@ export function validateCompanyForm(form: CompanyForm): CompanyErrors {
 
   const vatError = validateVatNumber(form.vat_number, sirenFromSiret(siret));
   if (vatError) errors.vat_number = vatError;
+  // A seller subject to VAT must print its VAT number on invoices
+  if (!errors.vat_number && isFrench && !form.vat_franchise && !form.vat_number.trim()) {
+    errors.vat_number =
+      'Le numéro de TVA est obligatoire, sauf si vous cochez la franchise en base de TVA.';
+  }
+
+  const capital = parseAmount(form.share_capital);
+  if (capital !== null && (Number.isNaN(capital) || capital <= 0)) {
+    errors.share_capital = 'Montant invalide : saisissez un nombre positif (ex. 10 000).';
+  }
+  if (form.registration_type && !['RCS', 'RM'].includes(form.registration_type)) {
+    errors.registration_type = 'Choisissez RCS ou RM.';
+  }
+  const apeError = validateApeCode(form.ape_code);
+  if (apeError) errors.ape_code = apeError;
+  const ibanError = validateIban(form.iban);
+  if (ibanError) errors.iban = ibanError;
+  const bicError = validateBic(form.bic);
+  if (bicError) errors.bic = bicError;
+
+  const days = form.default_payment_terms_days.trim();
+  if (days && (!/^\d{1,3}$/.test(days) || Number(days) > 60)) {
+    // Art. L441-10 du Code de commerce: 60 days at most from the invoice date
+    errors.default_payment_terms_days =
+      'Délai invalide : un nombre de jours entre 0 et 60 (plafond légal).';
+  }
 
   if (!form.address_line1.trim()) {
     errors.address_line1 = "L'adresse est obligatoire sur les factures.";
@@ -201,16 +322,34 @@ export function formFromParty(party: Party): CompanyForm {
     email: party.email ?? '',
     phone: party.phone ?? '',
     website: party.website ?? '',
+    share_capital:
+      party.share_capital == null ? '' : String(party.share_capital).replace('.', ','),
+    registration_type: party.registration_type ?? '',
+    registration_city: party.registration_city ?? '',
+    ape_code: party.ape_code ?? '',
+    iban: formatIban(party.iban),
+    bic: party.bic ?? '',
+    // NULL means "never chosen": propose the usual French conditions
+    default_payment_terms_days: String(
+      party.default_payment_terms_days ?? DEFAULT_PAYMENT_TERMS_DAYS
+    ),
+    late_penalty_text: party.late_penalty_text ?? DEFAULT_LATE_PENALTY_TEXT,
+    early_payment_discount_text:
+      party.early_payment_discount_text ?? DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT,
+    vat_franchise: Boolean(party.vat_franchise),
+    recovery_fee_enabled: party.recovery_fee_enabled !== 0,
   };
 }
 
-/** Normalised values to store (only columns of the `parties` table). */
-export function partyFieldsFromForm(form: CompanyForm): CompanyForm {
+/** Normalised form values (trimmed, compacted identifiers). */
+export function normalizeCompanyForm(form: CompanyForm): CompanyForm {
   const siret = digitsOnly(form.siret);
+  const legalForm = form.legal_form.trim();
+  const capital = parseAmount(form.share_capital);
   return {
     legal_name: form.legal_name.trim(),
     trading_name: form.trading_name.trim(),
-    legal_form: form.legal_form.trim(),
+    legal_form: legalForm,
     siret,
     siren: sirenFromSiret(siret),
     vat_number: compact(form.vat_number),
@@ -223,6 +362,57 @@ export function partyFieldsFromForm(form: CompanyForm): CompanyForm {
     email: form.email.trim(),
     phone: form.phone.trim(),
     website: form.website.trim(),
+    // An individual entrepreneur has no share capital
+    share_capital:
+      capital === null || Number.isNaN(capital) || !hasShareCapital(legalForm)
+        ? ''
+        : String(capital).replace('.', ','),
+    registration_type: form.registration_type,
+    registration_city: form.registration_type ? form.registration_city.trim() : '',
+    ape_code: compact(form.ape_code),
+    iban: formatIban(compact(form.iban)),
+    bic: compact(form.bic),
+    default_payment_terms_days: form.default_payment_terms_days.trim(),
+    late_penalty_text: form.late_penalty_text.trim(),
+    early_payment_discount_text: form.early_payment_discount_text.trim(),
+    vat_franchise: form.vat_franchise,
+    recovery_fee_enabled: form.recovery_fee_enabled,
+  };
+}
+
+/** Values to store, typed as columns of the `parties` table. */
+export function partyFieldsFromForm(
+  form: CompanyForm
+): UpdateRecord<Party> & { legal_name: string; country_code: string } {
+  const n = normalizeCompanyForm(form);
+  const days = n.default_payment_terms_days;
+  return {
+    legal_name: n.legal_name,
+    trading_name: n.trading_name,
+    legal_form: n.legal_form,
+    siret: n.siret,
+    siren: n.siren,
+    vat_number: n.vat_number,
+    address_line1: n.address_line1,
+    address_line2: n.address_line2,
+    postal_code: n.postal_code,
+    city: n.city,
+    country_code: n.country_code,
+    contact_name: n.contact_name,
+    email: n.email,
+    phone: n.phone,
+    website: n.website,
+    share_capital: parseAmount(n.share_capital),
+    registration_type: (n.registration_type || null) as 'RCS' | 'RM' | null,
+    registration_city: n.registration_city || null,
+    ape_code: n.ape_code || null,
+    iban: compact(n.iban) || null,
+    bic: n.bic || null,
+    default_payment_terms_days: days ? Number(days) : null,
+    late_penalty_text: n.late_penalty_text,
+    early_payment_discount_text: n.early_payment_discount_text,
+    vat_franchise: n.vat_franchise ? 1 : 0,
+    recovery_fee_enabled: n.recovery_fee_enabled ? 1 : 0,
   };
 }
 

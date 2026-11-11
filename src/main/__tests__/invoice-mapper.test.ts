@@ -13,7 +13,10 @@ import {
   InvoiceMappingError,
   VAT_FRANCHISE_MENTION,
   buildExportFilename,
+  buildSellerLegalLine,
   centsToAmount,
+  getInvoiceExportWarnings,
+  isSellerUnderVatFranchise,
   mapInvoiceToEN16931,
   mapParty,
   validateInvoiceForExport,
@@ -359,6 +362,59 @@ describe('mapInvoiceToEN16931', () => {
     expect(mapped.accountingSupplierParty.partyTaxScheme).toBeUndefined();
   });
 
+  it('uses the explicit VAT franchise flag rather than the VAT number', () => {
+    // Franchise, although a VAT number exists (EU operations)
+    const franchise = source([line(1, 4, 5000, 0, { vat_category: 'S' }), line(2, 1, 1000, 0, { vat_category: 'Z' })]);
+    franchise.seller = seller({ vat_franchise: 1 });
+    const mapped = mapInvoiceToEN16931(franchise);
+    for (const l of mapped.invoiceLines) {
+      expect(l.item.classifiedTaxCategory).toMatchObject({
+        id: VATCategory.EXEMPT,
+        percent: 0,
+        taxExemptionReason: VAT_FRANCHISE_MENTION,
+      });
+    }
+    expect(mapped.taxTotal[0].taxSubtotals).toHaveLength(1);
+    expect(mapped.taxTotal[0].taxSubtotals[0].taxCategory.taxExemptionReason).toBe(
+      VAT_FRANCHISE_MENTION
+    );
+    expect(mapped.legalMentions?.vatExemptionText).toBe(VAT_FRANCHISE_MENTION);
+    expect(mapped.note).toContain(VAT_FRANCHISE_MENTION);
+
+    // Subject to VAT (flag stored as 0) without VAT number yet: plain exemption
+    const subject = source([line(1, 4, 5000, 0)]);
+    subject.seller = seller({ vat_franchise: 0, vat_number: undefined });
+    const plain = mapInvoiceToEN16931(subject);
+    expect(plain.invoiceLines[0].item.classifiedTaxCategory.taxExemptionReason).toBe(
+      'Exonération de TVA'
+    );
+    expect(plain.legalMentions?.vatExemptionText).toBeUndefined();
+    expect(plain.note).toBe('Merci de votre confiance');
+  });
+
+  it('keeps explicit categories and taxed lines under the franchise', () => {
+    const src = source([
+      line(1, 1, 5000, 0, { vat_category: 'AE' }),
+      line(2, 1, 10000, 20),
+    ]);
+    src.seller = seller({ vat_franchise: 1 });
+    const mapped = mapInvoiceToEN16931(src);
+    expect(mapped.invoiceLines[0].item.classifiedTaxCategory.id).toBe(VATCategory.REVERSE_CHARGE);
+    expect(mapped.invoiceLines[1].item.classifiedTaxCategory).toMatchObject({ id: 'S', percent: 20 });
+    // Amounts of an issued invoice are never rewritten
+    expect(mapped.taxTotal[0].taxAmount).toBe(20);
+    expect(mapped.legalMentions?.vatExemptionText).toBeUndefined();
+    expect(getInvoiceExportWarnings(src).join(' ')).toMatch(/franchise en base de TVA mais/);
+  });
+
+  it('resolves the franchise status of legacy rows from the VAT number', () => {
+    expect(isSellerUnderVatFranchise(seller())).toBe(false);
+    expect(isSellerUnderVatFranchise(seller({ vat_number: ' ' }))).toBe(true);
+    expect(isSellerUnderVatFranchise(seller({ vat_number: '', vat_franchise: 0 }))).toBe(false);
+    expect(isSellerUnderVatFranchise(seller({ vat_franchise: 1 }))).toBe(true);
+    expect(isSellerUnderVatFranchise(undefined)).toBe(false);
+  });
+
   it('keeps an explicit zero-rate category (reverse charge)', () => {
     const mapped = mapInvoiceToEN16931(source([line(1, 1, 5000, 0, { vat_category: 'AE' })]));
     const category = mapped.invoiceLines[0].item.classifiedTaxCategory;
@@ -372,6 +428,144 @@ describe('mapInvoiceToEN16931', () => {
     const snapshot = JSON.stringify(src);
     mapInvoiceToEN16931(src);
     expect(JSON.stringify(src)).toBe(snapshot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// French legal mentions
+// ---------------------------------------------------------------------------
+
+describe('legal mentions', () => {
+  const company = (overrides: Partial<Party> = {}) =>
+    seller({
+      legal_name: 'Dupont Conseil',
+      legal_form: 'SAS',
+      share_capital: 10000,
+      registration_type: 'RCS',
+      registration_city: 'Paris',
+      ape_code: '6201Z',
+      vat_franchise: 0,
+      iban: 'FR7630006000011234567890189',
+      bic: 'BNPAFRPP',
+      recovery_fee_enabled: 1,
+      ...overrides,
+    });
+
+  it('builds the seller legal line of a company', () => {
+    expect(buildSellerLegalLine(company())).toBe(
+      'SAS au capital de 10 000 € – RCS Paris 732 829 320 – APE 6201Z'
+    );
+    expect(buildSellerLegalLine(company({ share_capital: 1500.5, registration_type: 'RM', registration_city: 'Lyon' }))).toBe(
+      'SAS au capital de 1 500,50 € – RM Lyon 732 829 320 – APE 6201Z'
+    );
+    // Without registration city the SIRET identifies the seller
+    expect(buildSellerLegalLine(company({ registration_city: '', share_capital: null, ape_code: null }))).toBe(
+      'SAS – SIRET 732 829 320 00074'
+    );
+  });
+
+  it('builds the seller legal line of an individual entrepreneur', () => {
+    const ei = company({
+      legal_name: 'Jean Dupont',
+      legal_form: 'EI (micro-entrepreneur)',
+      share_capital: 5000, // ignored: no capital for an EI
+      registration_type: null,
+      registration_city: null,
+    });
+    expect(buildSellerLegalLine(ei)).toBe(
+      'Entrepreneur individuel (EI) – SIRET 732 829 320 00074 – APE 6201Z'
+    );
+
+    // "EI" is added next to the name, once
+    const src = source();
+    src.seller = ei;
+    expect(
+      mapInvoiceToEN16931(src).accountingSupplierParty.partyLegalEntity.registrationName
+    ).toBe('Jean Dupont EI');
+    src.seller = { ...ei, legal_name: 'Jean Dupont EI' };
+    expect(
+      mapInvoiceToEN16931(src).accountingSupplierParty.partyLegalEntity.registrationName
+    ).toBe('Jean Dupont EI');
+  });
+
+  it('fills every mention from the company profile', () => {
+    const src = source();
+    src.seller = company({
+      late_penalty_text: 'Pénalités de retard : 12 % par an',
+      early_payment_discount_text: 'Escompte de 2 % pour paiement sous 8 jours',
+    });
+    expect(mapInvoiceToEN16931(src).legalMentions).toEqual({
+      sellerLegalLine: 'SAS au capital de 10 000 € – RCS Paris 732 829 320 – APE 6201Z',
+      paymentTermsText: 'Paiement à 30 jours, échéance le 14/04/2026',
+      latePenaltyText: 'Pénalités de retard : 12 % par an',
+      recoveryFeeText: 'Indemnité forfaitaire pour frais de recouvrement : 40 €',
+      earlyPaymentDiscountText: 'Escompte de 2 % pour paiement sous 8 jours',
+      bankDetails: {
+        iban: 'FR76 3000 6000 0112 3456 7890 189',
+        bic: 'BNPAFRPP',
+        accountHolder: 'Dupont Conseil',
+      },
+    });
+  });
+
+  it('falls back to the standard French conditions for a profile that never set them', () => {
+    const mentions = mapInvoiceToEN16931(source()).legalMentions;
+    expect(mentions?.latePenaltyText).toMatch(/3 fois le taux d'intérêt légal/);
+    expect(mentions?.recoveryFeeText).toMatch(/40 €/);
+    expect(mentions?.earlyPaymentDiscountText).toBe("Pas d'escompte pour paiement anticipé");
+    expect(mentions?.sellerLegalLine).toBe('EURL – SIRET 732 829 320 00074');
+    expect(mentions?.bankDetails).toBeUndefined();
+    expect(mentions?.vatExemptionText).toBeUndefined();
+  });
+
+  it('omits the recovery fee mention when it is switched off', () => {
+    const src = source();
+    src.seller = company({ recovery_fee_enabled: 0 });
+    expect(mapInvoiceToEN16931(src).legalMentions?.recoveryFeeText).toBeUndefined();
+  });
+
+  it('warns about incomplete, non-blocking seller data', () => {
+    const complete = source();
+    complete.seller = company();
+    expect(validateInvoiceForExport(complete)).toEqual([]);
+    expect(getInvoiceExportWarnings(complete)).toEqual([]);
+
+    const incomplete = source();
+    incomplete.seller = company({
+      share_capital: null,
+      registration_city: null,
+      vat_number: '',
+      iban: null,
+    });
+    // Still exportable...
+    expect(validateInvoiceForExport(incomplete)).toEqual([]);
+    // ...but every gap is reported
+    const warnings = getInvoiceExportWarnings(incomplete);
+    expect(warnings).toHaveLength(4);
+    expect(warnings.join('\n')).toMatch(/capital social/);
+    expect(warnings.join('\n')).toMatch(/immatriculation/i);
+    expect(warnings.join('\n')).toMatch(/numéro de TVA/);
+    expect(warnings.join('\n')).toMatch(/IBAN/);
+
+    // An individual entrepreneur under the franchise needs none of those
+    const ei = source([line(1, 1, 10000, 0)]);
+    ei.seller = company({
+      legal_form: 'EI',
+      share_capital: null,
+      registration_type: null,
+      registration_city: null,
+      vat_number: '',
+      vat_franchise: 1,
+    });
+    expect(getInvoiceExportWarnings(ei)).toEqual([]);
+  });
+
+  it('fails with a clear French message when required seller data is missing', () => {
+    const src = source();
+    src.seller = company({ address_line1: '', siret: '', siren: '' });
+    expect(() => mapInvoiceToEN16931(src)).toThrow(
+      /Les informations de votre entreprise sont incomplètes \(adresse, SIRET ou SIREN\)/
+    );
   });
 });
 

@@ -157,6 +157,52 @@ describe('invoice:export', () => {
     }
   });
 
+  it('exports a credit note as type 381 referencing the original invoice', async () => {
+    configureCompany();
+    service.invoices.finalize(invoiceId);
+    const creditNoteId = service.invoices.createCreditNote(invoiceId);
+
+    // Still a draft: no definitive number
+    const draft = await exportInvoice(creditNoteId, 'ubl');
+    expect(draft.success).toBe(false);
+    expect(draft.error).toContain('avoir est encore un brouillon');
+
+    service.invoices.finalize(creditNoteId);
+    const number = service.invoices.findById(creditNoteId)!.invoice_number;
+    expect(number).toMatch(/^AV-\d{4}-001$/);
+
+    for (const format of ['ubl', 'facturx-xml'] as const) {
+      const target = path.join(tmpDir, `avoir-${format}.xml`);
+      electronMock.showSaveDialog.mockResolvedValue({ canceled: false, filePath: target });
+
+      const response = await exportInvoice(creditNoteId, format);
+
+      expect(response.success).toBe(true);
+      expect(electronMock.showSaveDialog).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          title: "Exporter l'avoir",
+          defaultPath: `Avoir-${number}-${format === 'ubl' ? 'ubl' : 'facturx'}.xml`,
+        })
+      );
+      const xml = fs.readFileSync(target, 'utf-8');
+      expect(xml).toContain(number);
+      expect(xml).toMatch(/TypeCode>381</);
+      expect(xml).not.toMatch(/TypeCode>380<\/(ram:TypeCode|cbc:InvoiceTypeCode)>\s*<(ram:IssueDateTime|cbc:Note|cbc:DocumentCurrencyCode)/);
+      // Preceding invoice reference (BG-3) and positive amounts
+      expect(xml).toContain('INV-2026-001');
+      expect(xml).toContain('1143.27');
+      expect(xml).not.toContain('-1143.27');
+    }
+
+    const pdfTarget = path.join(tmpDir, 'avoir.pdf');
+    electronMock.showSaveDialog.mockResolvedValue({ canceled: false, filePath: pdfTarget });
+    const pdf = await exportInvoice(creditNoteId, 'facturx-pdf');
+    expect(pdf.success).toBe(true);
+    expect(electronMock.showSaveDialog).toHaveBeenLastCalledWith(
+      expect.objectContaining({ defaultPath: `Avoir-${number}.pdf` })
+    );
+  });
+
   it('writes nothing when the dialog is cancelled', async () => {
     configureCompany();
     service.invoices.finalize(invoiceId);

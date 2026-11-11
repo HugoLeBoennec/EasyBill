@@ -13,6 +13,18 @@ import type {
 } from '../database/types';
 import { computeInvoiceTotals } from '../database/repositories/invoice-repository';
 import {
+  DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT,
+  DEFAULT_LATE_PENALTY_TEXT,
+  INDIVIDUAL_ENTREPRENEUR_MENTION,
+  RECOVERY_FEE_TEXT,
+  VAT_FRANCHISE_MENTION,
+  formatEuroAmount,
+  formatIban,
+  formatSirenOrSiret,
+  hasShareCapital,
+  isIndividualEntrepreneur,
+} from '../database/company-legal';
+import {
   CurrencyCode,
   InvoiceTypeCode,
   PaymentMeansCode,
@@ -21,6 +33,7 @@ import {
 import type {
   Contact,
   Invoice as EN16931Invoice,
+  InvoiceLegalMentions,
   InvoiceLine as EN16931InvoiceLine,
   Party as EN16931Party,
   TaxCategory,
@@ -59,8 +72,8 @@ export class InvoiceMappingError extends Error {
 /** Name of the placeholder company row inserted by the initial schema. */
 export const COMPANY_PLACEHOLDER_NAME = 'Your Company Name';
 
-/** Legal mention required when the seller benefits from the VAT franchise. */
-export const VAT_FRANCHISE_MENTION = 'TVA non applicable, art. 293 B du CGI';
+// Legal mention required when the seller benefits from the VAT franchise
+export { VAT_FRANCHISE_MENTION };
 
 const EN16931_CUSTOMIZATION_ID = 'urn:cen.eu:en16931:2017';
 const DEFAULT_PROFILE_ID = 'urn:fdc:peppol.eu:2017:poacc:billing:01:1.0';
@@ -154,29 +167,168 @@ export function validateInvoiceForExport(source: InvoiceExportSource): string[] 
 }
 
 /**
+ * Whether the seller is under the VAT franchise (art. 293 B du CGI).
+ *
+ * The explicit `vat_franchise` flag of the company profile decides. Rows that
+ * do not carry the flag at all (data loaded before migration 003) fall back
+ * to the former rule: no VAT number means franchise.
+ */
+export function isSellerUnderVatFranchise(seller: DbParty | null | undefined): boolean {
+  if (!seller) return false;
+  if (seller.vat_franchise === undefined || seller.vat_franchise === null) {
+    return clean(seller.vat_number) === '';
+  }
+  return Number(seller.vat_franchise) === 1;
+}
+
+/**
+ * Points of the seller profile that should be completed but do not prevent
+ * the export (French messages). Blocking problems are reported by
+ * `validateInvoiceForExport`.
+ */
+export function getInvoiceExportWarnings(source: InvoiceExportSource): string[] {
+  const warnings: string[] = [];
+  const { seller, lines } = source;
+  if (!seller || isPlaceholderCompany(seller)) return warnings;
+
+  const franchise = isSellerUnderVatFranchise(seller);
+  const individual = isIndividualEntrepreneur(seller.legal_form);
+
+  if (!clean(seller.legal_form)) {
+    warnings.push(
+      "La forme juridique de votre entreprise n'est pas renseignée (elle doit figurer sur vos factures)."
+    );
+  } else if (hasShareCapital(seller.legal_form) && !seller.share_capital) {
+    warnings.push(
+      "Le capital social n'est pas renseigné : il est obligatoire sur les factures d'une société."
+    );
+  }
+  if (!individual && clean(seller.legal_form) && !clean(seller.registration_city)) {
+    warnings.push(
+      "L'immatriculation (RCS ou RM et ville) n'est pas renseignée dans les mentions légales."
+    );
+  }
+  if (clean(seller.siren) && !clean(seller.siret)) {
+    warnings.push('Le SIRET de votre entreprise est manquant (seul le SIREN est renseigné).');
+  }
+  if (!franchise && !clean(seller.vat_number)) {
+    warnings.push(
+      "Votre numéro de TVA intracommunautaire n'est pas renseigné alors que vous n'êtes pas en franchise en base de TVA."
+    );
+  }
+  if (franchise && (lines || []).some((line) => (Number(line.vat_rate) || 0) > 0)) {
+    warnings.push(
+      'Votre entreprise est en franchise en base de TVA mais cette facture comporte des lignes avec TVA.'
+    );
+  }
+  if (!clean(seller.iban)) {
+    warnings.push(
+      "Aucun IBAN n'est renseigné : les coordonnées bancaires ne figureront pas sur la facture."
+    );
+  }
+
+  return warnings.map((warning) => `${warning} Complétez Paramètres > Entreprise.`);
+}
+
+/**
+ * Identity line printed at the bottom of the invoice, e.g.
+ * "SAS au capital de 10 000 € – RCS Paris 732 829 320 – APE 6201Z" or
+ * "Entrepreneur individuel (EI) – SIRET 732 829 320 00074 – APE 6201Z".
+ */
+export function buildSellerLegalLine(seller: DbParty): string | undefined {
+  const parts: string[] = [];
+  const legalForm = clean(seller.legal_form);
+  const siret = clean(seller.siret).replace(/\s+/g, '');
+  const siren = clean(seller.siren).replace(/\s+/g, '') || siret.slice(0, 9);
+  const capital = Number(seller.share_capital) || 0;
+
+  if (isIndividualEntrepreneur(legalForm)) {
+    parts.push(`Entrepreneur individuel (${INDIVIDUAL_ENTREPRENEUR_MENTION})`);
+  } else if (capital > 0 && hasShareCapital(legalForm)) {
+    parts.push(
+      legalForm
+        ? `${legalForm} au capital de ${formatEuroAmount(capital)}`
+        : `Capital social de ${formatEuroAmount(capital)}`
+    );
+  } else if (legalForm) {
+    parts.push(legalForm);
+  }
+
+  const registrationType = clean(seller.registration_type).toUpperCase();
+  const registrationCity = clean(seller.registration_city);
+  if ((registrationType === 'RCS' || registrationType === 'RM') && registrationCity && siren) {
+    parts.push(`${registrationType} ${registrationCity} ${formatSirenOrSiret(siren)}`);
+  } else if (siret) {
+    parts.push(`SIRET ${formatSirenOrSiret(siret)}`);
+  } else if (siren) {
+    parts.push(`SIREN ${formatSirenOrSiret(siren)}`);
+  }
+
+  const ape = clean(seller.ape_code).toUpperCase();
+  if (ape) parts.push(`APE ${ape}`);
+
+  return parts.length > 0 ? parts.join(' – ') : undefined;
+}
+
+/**
+ * Ready-to-print French legal mentions of an invoice, from the seller
+ * profile (defaults apply when a text was never set).
+ */
+export function buildLegalMentions(
+  seller: DbParty,
+  options: { vatFranchiseApplied: boolean; paymentTermsText?: string }
+): InvoiceLegalMentions {
+  const mentions: InvoiceLegalMentions = {
+    sellerLegalLine: buildSellerLegalLine(seller),
+    paymentTermsText: options.paymentTermsText,
+    latePenaltyText: clean(seller.late_penalty_text) || DEFAULT_LATE_PENALTY_TEXT,
+    earlyPaymentDiscountText:
+      clean(seller.early_payment_discount_text) || DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT,
+  };
+  if (options.vatFranchiseApplied) mentions.vatExemptionText = VAT_FRANCHISE_MENTION;
+  // Enabled unless explicitly switched off
+  if (seller.recovery_fee_enabled === undefined || seller.recovery_fee_enabled === null
+    || Number(seller.recovery_fee_enabled) !== 0) {
+    mentions.recoveryFeeText = RECOVERY_FEE_TEXT;
+  }
+  const iban = clean(seller.iban).replace(/\s+/g, '').toUpperCase();
+  if (iban) {
+    mentions.bankDetails = {
+      iban: formatIban(iban),
+      bic: clean(seller.bic).toUpperCase() || undefined,
+      accountHolder: clean(seller.legal_name) || undefined,
+    };
+  }
+  return mentions;
+}
+
+/**
  * EN16931 VAT category of a line.
  * A positive rate is always the standard category. With a 0 % rate the
  * category stored in the database is kept when it is a valid zero-rate
- * category, otherwise the line is treated as exempt.
+ * category, otherwise the line is treated as exempt. Under the VAT franchise
+ * every 0 % line that is not an explicit reverse charge / intra-community /
+ * out-of-scope operation is exempt with the art. 293 B mention.
  */
 function resolveTaxCategory(
   dbCategory: string | undefined,
   rate: number,
-  sellerHasVatNumber: boolean
+  vatFranchise: boolean
 ): TaxCategory {
   const taxScheme = { id: 'VAT' };
   if (rate > 0) {
     return { id: VATCategory.STANDARD, percent: rate, taxScheme };
   }
 
-  const id = (
+  let id = (
     dbCategory && ZERO_RATE_CATEGORIES.includes(dbCategory) ? dbCategory : VATCategory.EXEMPT
   ) as VATCategory;
+  if (vatFranchise && id === VATCategory.ZERO_RATED) id = VATCategory.EXEMPT;
 
   let taxExemptionReason: string | undefined;
   switch (id) {
     case VATCategory.EXEMPT:
-      taxExemptionReason = sellerHasVatNumber ? 'Exonération de TVA' : VAT_FRANCHISE_MENTION;
+      taxExemptionReason = vatFranchise ? VAT_FRANCHISE_MENTION : 'Exonération de TVA';
       break;
     case VATCategory.REVERSE_CHARGE:
       taxExemptionReason = 'Autoliquidation de la TVA par le preneur';
@@ -269,12 +421,12 @@ export function mapInvoiceToEN16931(source: InvoiceExportSource): EN16931Invoice
   const { invoice, lines } = source;
   const seller = source.seller as DbParty;
   const buyer = source.buyer as DbParty;
-  const sellerHasVatNumber = clean(seller.vat_number) !== '';
+  const vatFranchise = isSellerUnderVatFranchise(seller);
 
   const sortedLines = [...lines].sort((a, b) => a.line_number - b.line_number);
 
   const categories = sortedLines.map((line) =>
-    resolveTaxCategory(line.vat_category, Number(line.vat_rate) || 0, sellerHasVatNumber)
+    resolveTaxCategory(line.vat_category, Number(line.vat_rate) || 0, vatFranchise)
   );
 
   const invoiceLines: EN16931InvoiceLine[] = sortedLines.map((line, index) => {
@@ -359,6 +511,17 @@ export function mapInvoiceToEN16931(source: InvoiceExportSource): EN16931Invoice
     paymentTermsNote = 'Paiement à réception de la facture';
   }
 
+  // Individual entrepreneurs must have "EI" next to their name (since 2022)
+  const supplierParty = mapParty(seller);
+  if (
+    isIndividualEntrepreneur(seller.legal_form) &&
+    !/(^|[^A-Za-z])EI([^A-Za-z]|$)|entrepreneur individuel/i.test(
+      supplierParty.partyLegalEntity.registrationName
+    )
+  ) {
+    supplierParty.partyLegalEntity.registrationName += ` ${INDIVIDUAL_ENTREPRENEUR_MENTION}`;
+  }
+
   const currency = (clean(invoice.currency) || 'EUR').toUpperCase() as CurrencyCode;
 
   const mapped: EN16931Invoice = {
@@ -373,7 +536,12 @@ export function mapInvoiceToEN16931(source: InvoiceExportSource): EN16931Invoice
     documentCurrencyCode: currency,
     buyerReference: clean(invoice.buyer_reference) || undefined,
 
-    accountingSupplierParty: mapParty(seller),
+    legalMentions: buildLegalMentions(seller, {
+      vatFranchiseApplied: franchise,
+      paymentTermsText: paymentTermsNote,
+    }),
+
+    accountingSupplierParty: supplierParty,
     accountingCustomerParty: mapParty(buyer),
 
     paymentTerms: { note: paymentTermsNote },

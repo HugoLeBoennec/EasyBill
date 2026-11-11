@@ -29,6 +29,18 @@ const PARTY_COLUMNS = [
   'electronic_address',
   'electronic_address_scheme',
   'active',
+  // Seller legal mentions, bank details and payment conditions (migration 003)
+  'share_capital',
+  'registration_type',
+  'registration_city',
+  'ape_code',
+  'vat_franchise',
+  'iban',
+  'bic',
+  'default_payment_terms_days',
+  'late_penalty_text',
+  'recovery_fee_enabled',
+  'early_payment_discount_text',
 ] as const;
 
 export class PartyRepository {
@@ -39,25 +51,17 @@ export class PartyRepository {
    */
   create(party: NewRecord<Party>): number {
     const stmt = this.db.prepare(`
-      INSERT INTO parties (
-        party_type, legal_name, trading_name, legal_form,
-        siren, siret, vat_number,
-        address_line1, address_line2, postal_code, city, state_region, country_code,
-        contact_name, phone, email, website,
-        electronic_address, electronic_address_scheme,
-        active
-      ) VALUES (
-        @party_type, @legal_name, @trading_name, @legal_form,
-        @siren, @siret, @vat_number,
-        @address_line1, @address_line2, @postal_code, @city, @state_region, @country_code,
-        @contact_name, @phone, @email, @website,
-        @electronic_address, @electronic_address_scheme,
-        @active
-      )
+      INSERT INTO parties (${PARTY_COLUMNS.join(', ')})
+      VALUES (${PARTY_COLUMNS.map((column) => `@${column}`).join(', ')})
     `);
     // Optional fields may be omitted: bind them as NULL / schema defaults
     const result = stmt.run(
-      bindColumns(party, PARTY_COLUMNS, { country_code: 'FR', active: 1 })
+      bindColumns(party, PARTY_COLUMNS, {
+        country_code: 'FR',
+        active: 1,
+        vat_franchise: 0,
+        recovery_fee_enabled: 1,
+      })
     );
     return result.lastInsertRowid as number;
   }
@@ -144,6 +148,12 @@ export class PartyRepository {
    * Update party
    */
   update(id: number, updates: UpdateRecord<Party>): boolean {
+    // Only real columns may be written (names end up in the SQL statement)
+    for (const key of Object.keys(updates)) {
+      if (!(PARTY_COLUMNS as readonly string[]).includes(key)) {
+        throw new Error(`Unknown or read-only column: ${key}`);
+      }
+    }
     const { clause: setClause, params } = buildSetClause(updates);
     if (!setClause) return false;
 

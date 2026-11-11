@@ -54,6 +54,11 @@ function toFrenchError(error: unknown): string {
   return `Échec de l'export de la facture : ${message}`;
 }
 
+/** "Facture-AV-2026-001.pdf" -> "Avoir-AV-2026-001.pdf" for a credit note. */
+function creditNoteFilename(filename: string, isCreditNote: boolean): string {
+  return isCreditNote ? filename.replace(/^Facture-/, 'Avoir-') : filename;
+}
+
 /** Load the invoice, its lines and both parties. */
 function loadExportSource(db: DatabaseService, invoiceId: number): InvoiceExportSource {
   const invoice = db.invoices.findById(invoiceId);
@@ -81,7 +86,7 @@ export async function generateInvoiceDocument(
   db: DatabaseService,
   invoiceId: number,
   format: InvoiceExportFormat
-): Promise<{ data: Uint8Array | string; defaultFilename: string }> {
+): Promise<{ data: Uint8Array | string; defaultFilename: string; isCreditNote: boolean }> {
   if (!INVOICE_EXPORT_FORMATS.includes(format)) {
     throw new InvoiceMappingError([`Format d'export non pris en charge : ${String(format)}.`]);
   }
@@ -89,11 +94,33 @@ export async function generateInvoiceDocument(
   const source = loadExportSource(db, invoiceId);
   if (source.invoice.status === 'draft') {
     throw new InvoiceMappingError([
-      "Cette facture est encore un brouillon : elle n'a pas de numéro définitif. Finalisez-la avant de l'exporter.",
+      source.invoice.invoice_type === 'credit_note'
+        ? "Cet avoir est encore un brouillon : il n'a pas de numéro définitif. Finalisez-le avant de l'exporter."
+        : "Cette facture est encore un brouillon : elle n'a pas de numéro définitif. Finalisez-la avant de l'exporter.",
     ]);
   }
 
+  const isCreditNote = source.invoice.invoice_type === 'credit_note';
   const model = mapInvoiceToEN16931(source);
+
+  if (isCreditNote) {
+    // BG-3: a credit note (type code 381) references the invoice it corrects
+    const original = source.invoice.credited_invoice_id
+      ? db.invoices.findById(source.invoice.credited_invoice_id)
+      : undefined;
+    if (!original) {
+      throw new InvoiceMappingError(["La facture d'origine de cet avoir est introuvable."]);
+    }
+    model.invoiceDocumentReference = [
+      { id: original.invoice_number, documentTypeCode: '380' },
+    ];
+    // Nothing is to be paid on a credit note: no due date, and the payment
+    // terms say what happens to the amount (BR-CO-25 requires one of the two)
+    model.dueDate = undefined;
+    model.paymentTerms = {
+      note: `Avoir sur la facture ${original.invoice_number} : montant à déduire du solde dû ou à rembourser`,
+    };
+  }
   const result = await invoiceGenerator.generate(model, {
     format,
     language: 'fr',
@@ -109,7 +136,11 @@ export async function generateInvoiceDocument(
 
   return {
     data: result.data,
-    defaultFilename: buildExportFilename(source.invoice.invoice_number, format),
+    defaultFilename: creditNoteFilename(
+      buildExportFilename(source.invoice.invoice_number, format),
+      isCreditNote
+    ),
+    isCreditNote,
   };
 }
 
@@ -122,14 +153,14 @@ export function registerExportHandlers(getDB: () => DatabaseService): void {
     'invoice:export',
     async (event, invoiceId: number, format: InvoiceExportFormat = 'facturx-pdf') => {
       try {
-        const { data, defaultFilename } = await generateInvoiceDocument(
+        const { data, defaultFilename, isCreditNote } = await generateInvoiceDocument(
           getDB(),
           Number(invoiceId),
           format
         );
 
         const options: SaveDialogOptions = {
-          title: 'Exporter la facture',
+          title: isCreditNote ? "Exporter l'avoir" : 'Exporter la facture',
           defaultPath: defaultFilename,
           filters: [DIALOG_FILTERS[format]],
           properties: ['showOverwriteConfirmation', 'createDirectory'],

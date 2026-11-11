@@ -274,6 +274,7 @@ export interface DocumentReference {
   id: string;                    // Document number
   documentTypeCode?: string;     // UNTDID 1001 code
   documentDescription?: string;  // Description
+  issueDate?: string;            // BT-26 (ISO 8601) issue date of the referenced invoice
 }
 
 /**
@@ -317,7 +318,11 @@ export interface Invoice {
   accountingCost?: string;       // BT-19 (buyer accounting reference)
   buyerReference?: string;       // BT-10 (buyer reference, mandatory in some contexts)
 
-  // BG-3: Preceding invoice reference (for credit notes)
+  // BT-13: Purchase order reference issued by the buyer
+  orderReference?: string;
+
+  // BG-3: Preceding invoice reference (for credit notes: the invoice being
+  // credited; `id` = BT-25 original invoice number, `issueDate` = BT-26)
   invoiceDocumentReference?: DocumentReference[];
 
   // BG-24: Additional documents (attachments)

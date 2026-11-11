@@ -25,6 +25,13 @@ import type {
   NewRecord,
   UpdateRecord,
 } from '../database/types';
+import type { InvoicePayment } from '../database/types';
+import type {
+  InvoiceDraftInput,
+  InvoiceDraftLineInput,
+} from '../database/repositories/invoice-repository';
+import type { InvoiceExportFormat } from './invoice-mapper';
+import type { InvoiceExportResult } from './export-handlers';
 
 // Type for IPC response
 interface IPCResponse<T = any> {
@@ -83,6 +90,27 @@ const invoiceAPI = {
 
   getFinancialMetrics: (paymentTermsDays?: number): Promise<IPCResponse<any>> =>
     ipcRenderer.invoke('invoice:getFinancialMetrics', paymentTermsDays),
+
+  // Create (id = null) or update a draft with its lines, atomically
+  saveDraft: (
+    id: number | null,
+    header: InvoiceDraftInput,
+    lines: InvoiceDraftLineInput[]
+  ): Promise<IPCResponse<number>> =>
+    ipcRenderer.invoke('invoice:saveDraft', id, header, lines),
+
+  markPaid: (id: number, paymentDate?: string): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('invoice:markPaid', id, paymentDate),
+
+  getPayments: (invoiceId: number): Promise<IPCResponse<InvoicePayment[]>> =>
+    ipcRenderer.invoke('invoice:getPayments', invoiceId),
+
+  // Generate the document and save it through a native dialog
+  export: (
+    id: number,
+    format: InvoiceExportFormat
+  ): Promise<IPCResponse<InvoiceExportResult>> =>
+    ipcRenderer.invoke('invoice:export', id, format),
 };
 
 // Party API

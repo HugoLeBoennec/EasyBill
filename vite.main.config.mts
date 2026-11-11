@@ -11,8 +11,6 @@ export default defineConfig({
         'electron',
         'electron-updater',
         'electron-log',
-        'electron-debug',
-        'electron-devtools-installer',
       ],
     },
   },

@@ -80,16 +80,39 @@ const newLine = (): LineItem => ({
   vat_rate: 20,
 });
 
-/** Amounts of a line in cents, computed the same way as the repository */
-const computeLine = (item: LineItem) => {
+/** Round half away from zero after removing binary noise (as the repository does) */
+const roundHalfUp = (value: number): number => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.sign(value) * Math.round(Number(Math.abs(value).toPrecision(12)));
+};
+
+/** Net amount of a line in cents (quantity x unit price) */
+const computeLineTotal = (item: LineItem): number => {
   const quantity = parseNumber(item.quantity);
   const unitPrice = parseNumber(item.unit_price);
-  if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice)) {
-    return { lineTotal: 0, vatAmount: 0 };
+  if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice)) return 0;
+  return roundHalfUp(quantity * roundHalfUp(unitPrice * 100));
+};
+
+/**
+ * Totals in cents, computed like the repository: HT is the sum of the lines,
+ * VAT is rounded once per rate on the total base of that rate.
+ */
+const computeTotals = (items: LineItem[]) => {
+  const baseByRate = new Map<number, number>();
+  for (const item of items) {
+    baseByRate.set(
+      item.vat_rate,
+      (baseByRate.get(item.vat_rate) || 0) + computeLineTotal(item)
+    );
   }
-  const lineTotal = Math.round(quantity * Math.round(unitPrice * 100));
-  const vatAmount = Math.round((lineTotal * item.vat_rate) / 100);
-  return { lineTotal, vatAmount };
+  let subtotal = 0;
+  let taxAmount = 0;
+  baseByRate.forEach((base, rate) => {
+    subtotal += base;
+    taxAmount += roundHalfUp((base * rate) / 100);
+  });
+  return { subtotal, taxAmount };
 };
 
 const inputClass = (hasError?: boolean) =>
@@ -251,16 +274,7 @@ const QuoteForm = () => {
     });
   };
 
-  const totals = lineItems.reduce(
-    (acc, item) => {
-      const { lineTotal, vatAmount } = computeLine(item);
-      return {
-        subtotal: acc.subtotal + lineTotal,
-        taxAmount: acc.taxAmount + vatAmount,
-      };
-    },
-    { subtotal: 0, taxAmount: 0 }
-  );
+  const totals = computeTotals(lineItems);
 
   const validate = (): FormErrors => {
     const next: FormErrors = { lineItems: {} };
@@ -326,7 +340,7 @@ const QuoteForm = () => {
         item_name: item.item_name.trim(),
         item_description: item.item_description.trim() || undefined,
         quantity: parseNumber(item.quantity),
-        unit_price: Math.round(parseNumber(item.unit_price) * 100),
+        unit_price: roundHalfUp(parseNumber(item.unit_price) * 100),
         vat_rate: item.vat_rate,
       }));
 
@@ -561,7 +575,7 @@ const QuoteForm = () => {
                 <div className="space-y-4">
                   {lineItems.map((item, index) => {
                     const lineErrors = errors.lineItems[item.key] || {};
-                    const { lineTotal } = computeLine(item);
+                    const lineTotal = computeLineTotal(item);
                     return (
                       <div
                         key={item.key}

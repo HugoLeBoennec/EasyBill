@@ -464,8 +464,6 @@ export interface QuoteLineInput {
   unit_code?: string;
   /** Unit price excluding VAT, in cents */
   unit_price: number;
-  /** Line discount in cents */
-  discount_amount?: number;
   vat_category?: string;
   /** Percentage, e.g. 20 for 20% */
   vat_rate: number;

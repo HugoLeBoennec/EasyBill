@@ -7,6 +7,11 @@
 import { ipcMain } from 'electron';
 import { DatabaseService } from '../database';
 import { registerSettingsHandlers } from './settings-handlers';
+import { registerExportHandlers } from './export-handlers';
+import type {
+  InvoiceDraftInput,
+  InvoiceDraftLineInput,
+} from '../database/repositories/invoice-repository';
 import type {
   Invoice,
   InvoiceLine,
@@ -42,6 +47,7 @@ export async function initializeIPC(): Promise<void> {
   registerEInvoiceHandlers();
   registerDatabaseHandlers();
   registerSettingsHandlers(getDB);
+  registerExportHandlers(getDB);
 
   console.log('IPC handlers registered');
 }
@@ -116,7 +122,9 @@ function registerInvoiceHandlers(): void {
   ipcMain.handle('invoice:delete', async (_, id: number) => {
     try {
       const success = getDB().invoices.delete(id);
-      return { success, data: success };
+      return success
+        ? { success, data: success }
+        : { success, data: success, error: 'Facture introuvable.' };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -126,7 +134,9 @@ function registerInvoiceHandlers(): void {
   ipcMain.handle('invoice:finalize', async (_, id: number) => {
     try {
       const success = getDB().invoices.finalize(id);
-      return { success, data: success };
+      return success
+        ? { success, data: success }
+        : { success, data: success, error: "Seul un brouillon peut être finalisé." };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -136,7 +146,13 @@ function registerInvoiceHandlers(): void {
   ipcMain.handle('invoice:markSent', async (_, id: number) => {
     try {
       const success = getDB().invoices.markAsSent(id);
-      return { success, data: success };
+      return success
+        ? { success, data: success }
+        : {
+            success,
+            data: success,
+            error: 'Seule une facture finalisée peut être marquée comme envoyée.',
+          };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -214,6 +230,45 @@ function registerInvoiceHandlers(): void {
     try {
       const metrics = getDB().invoices.getFinancialMetrics(paymentTermsDays);
       return { success: true, data: metrics };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Create (id = null) or update a draft and its lines atomically
+  ipcMain.handle(
+    'invoice:saveDraft',
+    async (_, id: number | null, header: InvoiceDraftInput, lines: InvoiceDraftLineInput[]) => {
+      try {
+        const invoiceId = getDB().invoices.saveDraft(id ?? null, header, lines);
+        return { success: true, data: invoiceId };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    }
+  );
+
+  // Mark as paid (records the payment date)
+  ipcMain.handle('invoice:markPaid', async (_, id: number, paymentDate?: string) => {
+    try {
+      const success = getDB().invoices.markAsPaid(id, paymentDate);
+      return success
+        ? { success, data: success }
+        : {
+            success,
+            data: success,
+            error: 'Seule une facture finalisée ou envoyée peut être marquée comme payée.',
+          };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Payments recorded for an invoice
+  ipcMain.handle('invoice:getPayments', async (_, invoiceId: number) => {
+    try {
+      const payments = getDB().invoices.findPayments(invoiceId);
+      return { success: true, data: payments };
     } catch (error: any) {
       return { success: false, error: error.message };
     }

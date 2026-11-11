@@ -173,10 +173,10 @@ const Quotes = () => {
         }
       } else {
         const response = await window.electron.quote.convertToInvoice(quote.id!);
-        if (response.success && response.data) {
+        if (response.success) {
           setShowInvoicesLink(true);
           setSuccess(
-            `Devis ${quote.quote_number} converti : facture ${response.data.invoice_number} créée en brouillon`
+            `Devis ${quote.quote_number} converti : une facture en brouillon a été créée (son numéro définitif sera attribué à la finalisation)`
           );
         } else {
           setError(response.error || 'Impossible de convertir le devis');

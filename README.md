@@ -2,7 +2,7 @@
 
 > A modern, cross-platform desktop invoicing application for freelancers and small businesses
 
-EasyBill is an open-source billing and invoicing solution built with Electron, React, and TypeScript. It offers a simple yet powerful interface to manage your invoices, customers, and stay compliant with French e-invoicing regulations.
+EasyBill is an open-source billing and invoicing solution built with Electron, React, and TypeScript. It offers a simple yet powerful interface to manage your invoices, quotes and customers, and to prepare for French e-invoicing regulations.
 
 ---
 
@@ -34,16 +34,15 @@ If you encounter issues or have suggestions, please open an issue on GitHub!
 - Consistent experience across all platforms
 - Desktop application with offline capabilities
 
-### 🇫🇷 French E-Invoicing Ready
-- Chorus Pro integration
-- Support for Factur-X, UBL, and CII formats
-- Compliant with 2026 mandatory e-invoicing regulations
-- Multi-platform support (Tiime, Pennylane, Sage)
+### 🇫🇷 Preparing for French E-Invoicing
+- Factur-X, UBL, and CII format generation
+- Settings screen for the platform you plan to use (Chorus Pro, Tiime, Pennylane, Sage...)
+- **Transmission to Chorus Pro or any other platform is not implemented yet** (see Upcoming Features)
 
 ### 💾 Privacy-First
 - All data stored locally on your machine
 - No cloud dependency
-- Encrypted credential storage
+- Backup and restore of the database file from the settings page
 - You own your data
 
 ### 🎨 Modern & Intuitive
@@ -60,35 +59,39 @@ If you encounter issues or have suggestions, please open an issue on GitHub!
 
 ✅ **Invoice Management**
 - Create, edit, and delete invoices
-- Professional invoice templates
 - PDF generation
 - Invoice status tracking
+
+✅ **Quotes (devis)** — being added now
+- Create and edit quotes, follow their status
 
 ✅ **Customer Management**
 - Customer database
 - SIREN/SIRET validation for French businesses
-- Customer history and statistics
 
-✅ **Dashboard & Analytics**
-- Overview of your business activity
-- Revenue tracking
-- Invoice status visualization
+✅ **Company Profile**
+- Seller legal identity (legal name, legal form, SIRET/SIREN, VAT number, address, contact)
+- SIRET and VAT number validation, French VAT number computed from the SIREN
 
-✅ **E-Invoicing (French Compliance)**
-- Chorus Pro integration
-- Support for qualification and production environments
+✅ **Dashboard**
+- Amounts awaiting payment and overdue
+- Counts of quotes, invoices, and customers
+
+✅ **E-Invoicing groundwork (French compliance)**
 - Factur-X, UBL, and CII format generation
-- Offline queue with automatic retry
-- Compliance dashboard
+- Platform settings storage (platform, environment, credentials)
+- Local queue table for invoices awaiting transmission
+- Nothing is sent to any platform yet
 
-✅ **Settings & Configuration**
-- Customizable invoice templates
-- Multi-language support (French, English)
-- E-invoicing platform configuration
+✅ **Settings**
+- Database backup and restore
+- Interface in French or English, following the system language (some screens are French only)
 
 ### 🔜 Upcoming Features
 
-- 📱 Mobile companion app (view-only)
+- 📤 Transmission of invoices to Chorus Pro / an approved platform (PA) — **not implemented**: today the app only stores the platform settings, generates the formats, and keeps a local queue
+- 📥 Reception of electronic invoices
+- 🏦 Remaining legal mentions on the company profile: share capital, RCS registration, APE/NAF code, IBAN/BIC, VAT franchise mention (art. 293 B du CGI)
 - 📧 Email integration for sending invoices
 - 💰 Payment tracking and reminders
 - 📈 Advanced analytics and reporting
@@ -126,10 +129,11 @@ If you encounter issues or have suggestions, please open an issue on GitHub!
 ### Build for Production
 
 ```bash
-# Build for your current platform
+# Package the application for your current platform (output in out/)
 npm run package
 
-# Output will be in release/build/
+# Build distributable installers (output in out/make/)
+npm run make
 ```
 
 ---
@@ -150,12 +154,12 @@ npm run package
 
 ## 🛠️ Technology Stack
 
-- **Framework**: Electron 33.x
-- **UI**: React 18, TailwindCSS
+- **Framework**: Electron 39
+- **UI**: React 19, TailwindCSS
 - **Language**: TypeScript
-- **Database**: SQLite (local storage)
+- **Database**: SQLite via better-sqlite3 (local storage)
 - **PDF Generation**: pdf-lib
-- **Build**: Webpack, Electron Builder
+- **Build**: Vite, Electron Forge
 
 ---
 
@@ -164,14 +168,16 @@ npm run package
 ### Milestone 1: Core Stability (Current)
 - ✅ Basic invoice and customer management
 - ✅ PDF generation
-- ✅ French e-invoicing foundation
+- ✅ Company profile, database backup and restore
+- ✅ French e-invoicing foundation (formats, settings, local queue)
+- 🔄 Quotes (devis)
 - 🔄 Bug fixes and stability improvements
 - 🔄 Comprehensive testing
 
 ### Milestone 2: E-Invoicing Polish
 - 📋 Complete Factur-X implementation
 - 📋 UBL and CII generators
-- 📋 Production-ready Chorus Pro integration
+- 📋 Chorus Pro / approved platform transmission (not started)
 - 📋 Invoice reception workflow
 
 ### Milestone 3: Feature Expansion
@@ -212,8 +218,10 @@ Contributions are welcome! This project is developed with the help of AI (Claude
 
 ## 🐛 Known Issues & Limitations
 
-- **Database migrations**: Manual backup recommended before updates
-- **E-invoicing**: Still in development, test thoroughly in qualification environment
+- **Database migrations**: Back up the database (Settings → Sauvegarde) before updates
+- **E-invoicing**: Invoices are not transmitted to Chorus Pro or any other platform; only format generation, settings, and a local queue exist
+- **Credentials**: E-invoicing platform credentials are stored unencrypted in the app's local storage
+- **Company profile**: Share capital, RCS, APE/NAF code, IBAN/BIC and the VAT franchise mention cannot be stored yet
 - **Performance**: Large invoice databases (>10,000) may experience slowdown
 - **Testing**: Test coverage is currently limited
 - **Platform-specific bugs**: Some features may behave differently across platforms
@@ -279,7 +287,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🔐 Security Notice
 
-This is an early-stage project. While we implement security best practices (encrypted storage, secure API communication), please:
+This is an early-stage project. Please:
 
 - ✅ Keep regular backups of your data
 - ✅ Use strong credentials for e-invoicing platforms

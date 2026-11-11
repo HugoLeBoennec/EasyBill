@@ -74,6 +74,7 @@ export default function App() {
             <Route path="dashboard" element={<DashboardNew />} />
             <Route path="invoices" element={<Invoices />} />
             <Route path="invoices/new" element={<InvoiceForm />} />
+            <Route path="invoices/:id" element={<InvoiceForm />} />
             <Route path="quotes" element={<Quotes />} />
             <Route path="quotes/new" element={<QuoteForm />} />
             <Route path="quotes/:id" element={<QuoteForm />} />

@@ -18,6 +18,11 @@ import type {
   NewRecord,
   UpdateRecord,
 } from '../types';
+import {
+  InvoiceRepository,
+  computeLineAmounts,
+  computeInvoiceTotals,
+} from './invoice-repository';
 
 /** Columns of `quotes` that may be changed through update() */
 const QUOTE_UPDATABLE_COLUMNS = [
@@ -97,9 +102,8 @@ function buildSetClause(
 /** Compute the stored amounts (in cents) of a line from user input */
 function computeLine(line: QuoteLineInput) {
   const quantity = Number(line.quantity);
-  const unitPrice = Math.round(Number(line.unit_price));
+  const unitPrice = Number(line.unit_price);
   const vatRate = Number(line.vat_rate);
-  const discount = Math.round(Number(line.discount_amount ?? 0));
 
   if (!line.item_name || !line.item_name.trim()) {
     throw new Error('Chaque ligne doit avoir une désignation');
@@ -107,18 +111,15 @@ function computeLine(line: QuoteLineInput) {
   if (!Number.isFinite(quantity) || quantity <= 0) {
     throw new Error('La quantité doit être supérieure à 0');
   }
-  if (!Number.isFinite(unitPrice) || unitPrice < 0) {
-    throw new Error('Le prix unitaire doit être positif');
+  if (!Number.isInteger(unitPrice) || unitPrice < 0) {
+    throw new Error('Le prix unitaire est invalide');
   }
   if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 100) {
     throw new Error('Le taux de TVA est invalide');
   }
 
-  const lineAmount = Math.round(quantity * unitPrice);
-  const lineTotal = lineAmount - discount;
-  if (lineTotal < 0) {
-    throw new Error('La remise ne peut pas dépasser le montant de la ligne');
-  }
+  // Same rounding rules as invoices, so a converted quote matches to the cent
+  const amounts = computeLineAmounts(quantity, unitPrice, vatRate);
 
   return {
     item_name: line.item_name.trim(),
@@ -127,12 +128,12 @@ function computeLine(line: QuoteLineInput) {
     quantity,
     unit_code: line.unit_code || 'C62',
     unit_price: unitPrice,
-    line_amount: lineAmount,
-    discount_amount: discount,
-    line_total: lineTotal,
-    vat_category: line.vat_category || (vatRate === 0 ? 'Z' : 'S'),
+    line_amount: amounts.line_amount,
+    discount_amount: 0,
+    line_total: amounts.line_total,
+    vat_category: line.vat_category || (vatRate > 0 ? 'S' : 'E'),
     vat_rate: vatRate,
-    vat_amount: Math.round((lineTotal * vatRate) / 100),
+    vat_amount: amounts.vat_amount,
   };
 }
 
@@ -625,77 +626,51 @@ export class QuoteRepository {
         throw new Error('Le devis ne contient aucune ligne');
       }
 
+      if (lines.some((line) => (line.discount_amount ?? 0) !== 0)) {
+        throw new Error(
+          'Ce devis contient des remises par ligne, non prises en charge par les factures'
+        );
+      }
+
       const paymentTerms = options.payment_terms_days ?? 30;
       const today = new Date();
       const due = new Date(today);
       due.setDate(due.getDate() + paymentTerms);
 
-      const invoiceNumber = this.getNextInvoiceNumber();
       const notes = [`Selon devis ${quote.quote_number}`, quote.notes]
         .filter(Boolean)
         .join('\n');
 
-      const invoiceResult = this.db
-        .prepare(
-          `
-        INSERT INTO invoices (
-          invoice_number, invoice_date, due_date, invoice_type,
-          subtotal_amount, tax_amount, total_amount, paid_amount, currency,
-          seller_id, buyer_id, status, payment_status, payment_terms_days,
-          notes, buyer_reference
-        ) VALUES (
-          @invoice_number, @invoice_date, @due_date, 'invoice',
-          @subtotal_amount, @tax_amount, @total_amount, 0, @currency,
-          @seller_id, @buyer_id, 'draft', 'unpaid', @payment_terms_days,
-          @notes, @buyer_reference
-        )
-      `
-        )
-        .run({
-          invoice_number: invoiceNumber,
+      // The invoice is created through the invoice repository so that it
+      // follows the invoice rules: provisional draft number (the legal number
+      // is assigned when the invoice is finalized), amounts recomputed from
+      // the lines. The nested transaction becomes a savepoint of this one.
+      const invoices = new InvoiceRepository(this.db);
+      const invoiceId = invoices.saveDraft(
+        null,
+        {
           invoice_date: localDate(today),
           due_date: localDate(due),
-          subtotal_amount: quote.subtotal_amount,
-          tax_amount: quote.tax_amount,
-          total_amount: quote.total_amount,
-          currency: quote.currency,
-          seller_id: options.seller_id ?? 1,
           buyer_id: quote.customer_id,
+          seller_id: options.seller_id ?? null,
           payment_terms_days: paymentTerms,
           notes,
           buyer_reference: quote.customer_reference ?? null,
-        });
-      const invoiceId = invoiceResult.lastInsertRowid as number;
-
-      const insertLine = this.db.prepare(`
-        INSERT INTO invoice_lines (
-          invoice_id, line_number, item_name, item_description, item_code,
-          quantity, unit_code, unit_price, line_amount,
-          discount_amount, line_total, vat_category, vat_rate, vat_amount
-        ) VALUES (
-          @invoice_id, @line_number, @item_name, @item_description, @item_code,
-          @quantity, @unit_code, @unit_price, @line_amount,
-          @discount_amount, @line_total, @vat_category, @vat_rate, @vat_amount
-        )
-      `);
-      for (const line of lines) {
-        insertLine.run({
-          invoice_id: invoiceId,
-          line_number: line.line_number,
+          currency: quote.currency,
+        },
+        lines.map((line) => ({
           item_name: line.item_name,
           item_description: line.item_description ?? null,
           item_code: line.item_code ?? null,
           quantity: line.quantity,
           unit_code: line.unit_code,
           unit_price: line.unit_price,
-          line_amount: line.line_amount,
-          discount_amount: line.discount_amount ?? 0,
-          line_total: line.line_total,
-          vat_category: line.vat_category,
           vat_rate: line.vat_rate,
-          vat_amount: line.vat_amount,
-        });
-      }
+          vat_category: line.vat_category,
+        }))
+      );
+      const invoice = invoices.findById(invoiceId);
+      const invoiceNumber = invoice?.invoice_number ?? '';
 
       const now = new Date().toISOString();
       this.update(id, {
@@ -736,12 +711,12 @@ export class QuoteRepository {
   }
 
   private sumTotals(lines: ReturnType<typeof computeLine>[]) {
-    const subtotal = lines.reduce((sum, l) => sum + l.line_total, 0);
-    const tax = lines.reduce((sum, l) => sum + l.vat_amount, 0);
+    // HT = sum of lines; TVA rounded per (category, rate) group, like invoices
+    const totals = computeInvoiceTotals(lines);
     return {
-      subtotal_amount: subtotal,
-      tax_amount: tax,
-      total_amount: subtotal + tax,
+      subtotal_amount: totals.subtotal_amount,
+      tax_amount: totals.tax_amount,
+      total_amount: totals.total_amount,
     };
   }
 
@@ -757,22 +732,5 @@ export class QuoteRepository {
       item_description: line.item_description ?? undefined,
       item_code: line.item_code ?? undefined,
     });
-  }
-
-  /**
-   * Next invoice number, same INV-YYYY-NNN scheme as InvoiceRepository
-   */
-  private getNextInvoiceNumber(prefix: string = 'INV'): string {
-    const year = new Date().getFullYear();
-    const rows = this.db
-      .prepare('SELECT invoice_number FROM invoices WHERE invoice_number LIKE ?')
-      .all(`${prefix}-${year}-%`) as { invoice_number: string }[];
-
-    const last = rows.reduce((max, row) => {
-      const match = row.invoice_number.match(/-(\d+)$/);
-      return match ? Math.max(max, parseInt(match[1], 10)) : max;
-    }, 0);
-
-    return `${prefix}-${year}-${(last + 1).toString().padStart(3, '0')}`;
   }
 }

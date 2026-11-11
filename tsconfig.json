@@ -1,25 +1,32 @@
 {
   "compilerOptions": {
-    "target": "es2021",
-    "module": "commonjs",
-    "lib": ["dom", "esnext"],
-    "declaration": true,
-    "declarationMap": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["node", "vitest/globals"],
     "jsx": "react-jsx",
     "strict": true,
-    "pretty": true,
-    "sourceMap": true,
-    "baseUrl": "./src",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "moduleResolution": "node",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
-    "allowJs": true,
-    "outDir": "release/app/dist"
+    "forceConsistentCasingInFileNames": true,
+    "pretty": true
   },
-  "exclude": ["test", "release/build", "release/app/dist", ".erb/dll"]
+  "include": [
+    "src",
+    "assets/assets.d.ts",
+    "forge.env.d.ts",
+    "forge.config.ts",
+    "vite.*.config.mts",
+    "vitest.config.mts"
+  ],
+  "exclude": ["node_modules", ".vite", "out", "coverage"]
 }

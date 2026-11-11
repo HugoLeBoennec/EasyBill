@@ -1,21 +1,27 @@
 {
-  "name": "easybill-new",
-  "productName": "easybill-new",
+  "name": "easybill",
+  "productName": "EasyBill",
   "version": "1.0.0",
-  "description": "My Electron application description",
+  "description": "Desktop invoicing and quoting app for French businesses, with e-invoicing support (Factur-X, UBL, Chorus Pro).",
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx,.mts,.js,.jsx .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
-  "keywords": [],
-  "author": {
-    "name": "Claude",
-    "email": "noreply@anthropic.com"
-  },
+  "keywords": [
+    "invoicing",
+    "e-invoicing",
+    "factur-x",
+    "ubl",
+    "electron"
+  ],
+  "author": "Hugo Le Boennec",
   "license": "MIT",
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",
@@ -27,23 +33,30 @@
     "@electron-forge/plugin-fuses": "^7.10.2",
     "@electron-forge/plugin-vite": "^7.10.2",
     "@electron/fuses": "^1.8.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/electron-squirrel-startup": "^1.0.2",
+    "@types/node": "^22.20.5",
     "@types/react": "^19.2.6",
     "@types/react-dom": "^19.2.3",
-    "@typescript-eslint/eslint-plugin": "^5.62.0",
-    "@typescript-eslint/parser": "^5.62.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.2",
+    "@typescript-eslint/parser": "^8.72.2",
     "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.22",
     "electron": "39.2.3",
     "electron-devtools-installer": "^4.0.0",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-promise": "^6.6.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^4.6.2",
     "postcss": "^8.5.6",
     "sass": "^1.94.2",
     "sass-loader": "^16.0.6",
     "tailwindcss": "^3.4.18",
     "typescript": "~5.6",
-    "vite": "^5.4.21"
+    "vite": "^5.4.21",
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.5",

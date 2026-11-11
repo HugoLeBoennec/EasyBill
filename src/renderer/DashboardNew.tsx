@@ -6,6 +6,12 @@
 
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import type { Invoice } from '../database/types';
+import { useStrings } from './LocaleContext';
+import {
+  isCompanyProfileComplete,
+  isPlaceholderCompany,
+} from './pages/companyValidation';
 
 interface Stats {
   total_invoices: number;
@@ -39,7 +45,12 @@ const DashboardNew = () => {
   const [stats, setStats] = useState<Stats | null>(null);
   const [compliance, setCompliance] = useState<ComplianceStats | null>(null);
   const [financialMetrics, setFinancialMetrics] = useState<FinancialMetrics | null>(null);
-  const [recentInvoices, setRecentInvoices] = useState<any[]>([]);
+  const [recentInvoices, setRecentInvoices] = useState<Invoice[]>([]);
+  // 'missing': no company party yet, 'incomplete': mandatory mentions missing
+  const [companyStatus, setCompanyStatus] = useState<
+    'ok' | 'missing' | 'incomplete'
+  >('ok');
+  const t = useStrings().dashboardPage;
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -71,7 +82,19 @@ const DashboardNew = () => {
       // Load recent invoices
       const recentResp = await window.electron.invoice.getRecent(5);
       if (recentResp.success) {
-        setRecentInvoices(recentResp.data);
+        setRecentInvoices(recentResp.data ?? []);
+      }
+
+      // Seller identity is required on every invoice
+      const companyResp = await window.electron.party.getCompany();
+      if (companyResp.success) {
+        if (isPlaceholderCompany(companyResp.data)) {
+          setCompanyStatus('missing');
+        } else {
+          setCompanyStatus(
+            isCompanyProfileComplete(companyResp.data) ? 'ok' : 'incomplete'
+          );
+        }
       }
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
@@ -103,6 +126,29 @@ const DashboardNew = () => {
         <h1 className="text-3xl font-bold text-gray-900">Tableau de bord</h1>
         <p className="text-gray-600 mt-1">Vue d'ensemble de votre activité</p>
       </div>
+
+      {/* Company profile missing */}
+      {companyStatus !== 'ok' && (
+        <div
+          role="alert"
+          className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg p-5 mb-8"
+        >
+          <div>
+            <p className="text-lg font-bold text-yellow-900">
+              {companyStatus === 'missing'
+                ? t.companyMissingTitle
+                : t.companyIncompleteTitle}
+            </p>
+            <p className="text-yellow-800 mt-1">{t.companyMissingDesc}</p>
+          </div>
+          <Link
+            to="/setting/company"
+            className="shrink-0 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-center"
+          >
+            {t.companyMissingAction}
+          </Link>
+        </div>
+      )}
 
       {/* Financial Metrics */}
       {financialMetrics && (
@@ -312,7 +358,7 @@ const DashboardNew = () => {
                   />
                 </svg>
                 <span className="text-yellow-800 text-sm font-medium">
-                  {stats.pending_einvoices} e-facture(s) en attente d'envoi
+                  {stats?.pending_einvoices} e-facture(s) en attente d'envoi
                 </span>
               </div>
             </div>

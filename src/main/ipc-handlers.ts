@@ -6,6 +6,7 @@
 
 import { ipcMain } from 'electron';
 import { DatabaseService } from '../database';
+import { registerSettingsHandlers } from './settings-handlers';
 import type {
   Invoice,
   InvoiceLine,
@@ -17,6 +18,9 @@ import type {
   InvoiceFilter,
   PartyFilter,
   QuoteFilter,
+  QuoteInput,
+  QuoteLineInput,
+  QuoteStatus,
   NewRecord,
   UpdateRecord,
 } from '../database/types';
@@ -37,6 +41,7 @@ export async function initializeIPC(): Promise<void> {
   registerQuoteHandlers();
   registerEInvoiceHandlers();
   registerDatabaseHandlers();
+  registerSettingsHandlers(getDB);
 
   console.log('IPC handlers registered');
 }
@@ -423,6 +428,62 @@ function registerQuoteHandlers(): void {
     try {
       const quotes = getDB().quotes.getRecent(limit);
       return { success: true, data: quotes };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get quote with customer info and lines
+  ipcMain.handle('quote:getWithLines', async (_, id: number) => {
+    try {
+      const data = getDB().quotes.getWithLines(id);
+      return { success: true, data };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Create quote and lines atomically (totals computed in the repository)
+  ipcMain.handle(
+    'quote:createWithLines',
+    async (_, quote: QuoteInput, lines: QuoteLineInput[]) => {
+      try {
+        const id = getDB().quotes.createWithLines(quote, lines);
+        return { success: true, data: id };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    }
+  );
+
+  // Update quote and replace its lines atomically
+  ipcMain.handle(
+    'quote:updateWithLines',
+    async (_, id: number, quote: QuoteInput, lines: QuoteLineInput[]) => {
+      try {
+        const success = getDB().quotes.updateWithLines(id, quote, lines);
+        return { success, data: success };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    }
+  );
+
+  // Change quote status
+  ipcMain.handle('quote:setStatus', async (_, id: number, status: QuoteStatus) => {
+    try {
+      const success = getDB().quotes.setStatus(id, status);
+      return { success, data: success };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Convert quote to a draft invoice
+  ipcMain.handle('quote:convertToInvoice', async (_, id: number) => {
+    try {
+      const data = getDB().quotes.convertToInvoice(id);
+      return { success: true, data };
     } catch (error: any) {
       return { success: false, error: error.message };
     }

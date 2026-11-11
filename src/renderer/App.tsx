@@ -4,7 +4,6 @@ import {
   Route,
   Outlet,
   NavLink,
-  useLocation,
 } from 'react-router-dom';
 import Setting from './Setting';
 import DashboardNew from './DashboardNew';
@@ -12,15 +11,21 @@ import Company from './pages/yourCompany';
 import EInvoicing from './EInvoicing';
 import Invoices from './Invoices';
 import InvoiceForm from './InvoiceForm';
+import Quotes from './Quotes';
+import QuoteForm from './QuoteForm';
 import Customers from './Customers';
 import Dev from './Devtest';
 // import 'tailwindcss/tailwind.css';
 import './App.css';
-import { LocaleProvider } from './LocaleContext';
+import { LocaleProvider, useStrings } from './LocaleContext';
 
 const Navbar = () => {
-  const navLink = ['Dashboard', 'Invoices', 'Customers', 'Setting', 'Test'];
-  const navs = navLink.map((name) => (
+  const labels: Record<string, string> = useStrings().nav;
+  // Route path is the lower-cased name; the label comes from the locale files
+  const navLink = ['Dashboard', 'Invoices', 'Quotes', 'Customers', 'Setting'];
+  // Component playground, only reachable in development builds
+  if (import.meta.env.DEV) navLink.push('Test');
+  const navs = [...new Set(navLink)].map((name) => (
     <NavLink
       key={name}
       className={({ isActive }) =>
@@ -32,7 +37,7 @@ const Navbar = () => {
       }
       to={`/${name.toLowerCase()}`}
     >
-      {name}
+      {labels[name.toLowerCase()] ?? name}
     </NavLink>
   ));
   return (
@@ -65,10 +70,13 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Base />}>
             <Route index element={<DashboardNew />} />
-            <Route path="test" element={<Dev />} />
+            {import.meta.env.DEV && <Route path="test" element={<Dev />} />}
             <Route path="dashboard" element={<DashboardNew />} />
             <Route path="invoices" element={<Invoices />} />
             <Route path="invoices/new" element={<InvoiceForm />} />
+            <Route path="quotes" element={<Quotes />} />
+            <Route path="quotes/new" element={<QuoteForm />} />
+            <Route path="quotes/:id" element={<QuoteForm />} />
             <Route path="customers" element={<Customers />} />
             <Route path="setting" element={<Setting />} />
             <Route path="setting/company" element={<Company />} />

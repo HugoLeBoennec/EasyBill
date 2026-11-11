@@ -16,6 +16,12 @@ import type {
   InvoiceFilter,
   PartyFilter,
   QuoteFilter,
+  QuoteComplete,
+  QuoteInput,
+  QuoteLineInput,
+  QuoteStatus,
+  QuoteWithLines,
+  QuoteConversionResult,
   NewRecord,
   UpdateRecord,
 } from '../database/types';
@@ -117,7 +123,7 @@ const quoteAPI = {
   getComplete: (id: number): Promise<IPCResponse<any>> =>
     ipcRenderer.invoke('quote:getComplete', id),
 
-  list: (filter?: QuoteFilter): Promise<IPCResponse<{ quotes: Quote[]; count: number }>> =>
+  list: (filter?: QuoteFilter): Promise<IPCResponse<{ quotes: QuoteComplete[]; count: number }>> =>
     ipcRenderer.invoke('quote:list', filter),
 
   update: (id: number, updates: UpdateRecord<Quote>): Promise<IPCResponse<boolean>> =>
@@ -144,6 +150,22 @@ const quoteAPI = {
 
   getRecent: (limit?: number): Promise<IPCResponse<Quote[]>> =>
     ipcRenderer.invoke('quote:getRecent', limit),
+
+  // Quote + lines (transactional)
+  getWithLines: (id: number): Promise<IPCResponse<QuoteWithLines | undefined>> =>
+    ipcRenderer.invoke('quote:getWithLines', id),
+
+  createWithLines: (quote: QuoteInput, lines: QuoteLineInput[]): Promise<IPCResponse<number>> =>
+    ipcRenderer.invoke('quote:createWithLines', quote, lines),
+
+  updateWithLines: (id: number, quote: QuoteInput, lines: QuoteLineInput[]): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('quote:updateWithLines', id, quote, lines),
+
+  setStatus: (id: number, status: QuoteStatus): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('quote:setStatus', id, status),
+
+  convertToInvoice: (id: number): Promise<IPCResponse<QuoteConversionResult>> =>
+    ipcRenderer.invoke('quote:convertToInvoice', id),
 };
 
 // E-Invoice API
@@ -186,6 +208,14 @@ const databaseAPI = {
 
   restore: (path: string): Promise<IPCResponse<boolean>> =>
     ipcRenderer.invoke('db:restore', path),
+
+  // Native file dialogs (the main process asks for the path and confirms)
+  backupWithDialog: (): Promise<IPCResponse<{ canceled: boolean; path?: string }>> =>
+    ipcRenderer.invoke('db:backupWithDialog'),
+
+  restoreWithDialog: (): Promise<
+    IPCResponse<{ canceled: boolean; path?: string; safetyCopy?: string }>
+  > => ipcRenderer.invoke('db:restoreWithDialog'),
 };
 
 // Expose APIs to renderer

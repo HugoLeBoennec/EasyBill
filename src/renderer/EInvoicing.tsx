@@ -1,6 +1,6 @@
 import { useContext, useState, useEffect } from 'react';
 import { LocaleContext } from './LocaleContext';
-import { InputText, InputCheckBox, InputRadio } from './components/inputs';
+import { InputText } from './components/inputs';
 import fr from './locales/fr';
 import en from './locales/en';
 import {
@@ -61,17 +61,10 @@ const EInvoicing = () => {
     setValidationErrors([]);
     setSaveSuccess(false);
 
-    // Log current settings for debugging
-    console.log('Attempting to save settings:', {
-      ...settings,
-      clientSecret: settings.clientSecret ? `*** (${settings.clientSecret.length} chars)` : '(empty)',
-    });
-
     // Validate settings
     const validation = validateSettings(settings);
 
     if (!validation.valid) {
-      console.error('Validation failed:', validation.errors);
       setValidationErrors(validation.errors);
       return;
     }
@@ -79,7 +72,6 @@ const EInvoicing = () => {
     // Save settings
     try {
       persistSettings(settings);
-      console.log('Settings saved successfully');
       setSaveSuccess(true);
 
       // Hide success message after 3 seconds
@@ -87,7 +79,6 @@ const EInvoicing = () => {
         setSaveSuccess(false);
       }, 3000);
     } catch (error) {
-      console.error('Failed to save:', error);
       setValidationErrors([
         error instanceof Error ? error.message : 'Failed to save settings',
       ]);

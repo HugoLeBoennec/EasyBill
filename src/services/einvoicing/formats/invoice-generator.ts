@@ -32,7 +32,9 @@ export interface InvoiceGenerationResult {
 /**
  * Combined options for all generators
  */
-export interface InvoiceGeneratorOptions extends FormatGenerationOptions, PDFGenerationOptions {
+export interface InvoiceGeneratorOptions
+  extends Omit<FormatGenerationOptions, 'format'>,
+    PDFGenerationOptions {
   // Output format
   format: InvoiceOutputFormat;
 
@@ -58,13 +60,21 @@ export class InvoiceGenerator {
 
       switch (options.format) {
         case 'ubl':
-          return this.generateUBL(invoice, options, filename);
+          return this.generateUBL(
+            invoice,
+            { ...options, format: 'ubl' },
+            filename
+          );
 
         case 'facturx-pdf':
           return await this.generateFacturXPDF(invoice, options, filename);
 
         case 'facturx-xml':
-          return this.generateFacturXXML(invoice, options, filename);
+          return this.generateFacturXXML(
+            invoice,
+            { ...options, format: 'facturx' },
+            filename
+          );
 
         default:
           throw new Error(`Unsupported format: ${options.format}`);
@@ -75,7 +85,7 @@ export class InvoiceGenerator {
         format: options.format,
         mimeType: '',
         filename: '',
-        errors: [error.message],
+        errors: [error instanceof Error ? error.message : String(error)],
       };
     }
   }

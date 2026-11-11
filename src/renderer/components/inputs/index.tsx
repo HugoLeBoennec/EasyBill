@@ -1,5 +1,5 @@
 /* eslint-disable jsx-a11y/label-has-associated-control */
-import { ChangeEvent, CSSProperties, FC, ReactChild, ReactNode } from 'react';
+import { ChangeEvent, CSSProperties, FC, ReactNode } from 'react';
 
 type InputTextType =
   | 'email'
@@ -13,7 +13,7 @@ type InputTextType =
 type InputDateType = 'date' | 'datetime-local' | 'month' | 'week' | 'time';
 
 type InputBaseProps = {
-  children?: ReactChild;
+  children?: ReactNode;
   className?: string;
   id: string;
   label?: string;
@@ -31,7 +31,6 @@ type InputBaseProps = {
 const InputText = ({
   id,
   type,
-  label,
   name,
   placeholder,
   onChange,

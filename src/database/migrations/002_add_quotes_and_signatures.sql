@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS quotes (
   accepted_at TEXT,
 
   FOREIGN KEY (customer_id) REFERENCES parties(id),
-  FOREIGN KEY (converted_to_invoice_id) REFERENCES invoices(id),
+  FOREIGN KEY (converted_to_invoice_id) REFERENCES invoices(id) ON DELETE SET NULL,
   CHECK (status IN ('draft', 'sent', 'accepted', 'rejected', 'expired', 'converted'))
 );
 
@@ -148,6 +148,16 @@ BEGIN
   UPDATE quote_lines SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
 
+-- When an invoice created from a quote is deleted, release the quote so it
+-- can be converted again (otherwise it would stay 'converted' with no invoice)
+CREATE TRIGGER IF NOT EXISTS trg_quotes_release_on_invoice_delete
+BEFORE DELETE ON invoices
+BEGIN
+  UPDATE quotes
+  SET status = 'accepted', converted_to_invoice_id = NULL, converted_at = NULL
+  WHERE converted_to_invoice_id = OLD.id;
+END;
+
 -- Audit log trigger for quote creation
 CREATE TRIGGER IF NOT EXISTS trg_audit_quote_insert
 AFTER INSERT ON quotes
@@ -186,5 +196,5 @@ LEFT JOIN parties c ON q.customer_id = c.id;
 -- MIGRATION TRACKING
 -- ============================================================================
 
-INSERT INTO schema_migrations (version, name, checksum)
+INSERT OR IGNORE INTO schema_migrations (version, name, checksum)
 VALUES ('002', 'add_quotes_and_signatures', 'sha256_002_placeholder');

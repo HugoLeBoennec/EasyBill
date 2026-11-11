@@ -455,6 +455,44 @@ export interface QuoteComplete extends Quote {
   customer_phone?: string;
 }
 
+/** Line as entered by the user; amounts are computed by the repository */
+export interface QuoteLineInput {
+  item_name: string;
+  item_description?: string;
+  item_code?: string;
+  quantity: number;
+  unit_code?: string;
+  /** Unit price excluding VAT, in cents */
+  unit_price: number;
+  /** Line discount in cents */
+  discount_amount?: number;
+  vat_category?: string;
+  /** Percentage, e.g. 20 for 20% */
+  vat_rate: number;
+}
+
+/** Quote header as entered by the user; totals are computed from the lines */
+export interface QuoteInput {
+  /** Auto-generated when omitted (creation only) */
+  quote_number?: string;
+  quote_date: string;
+  valid_until?: string;
+  customer_id: number;
+  currency?: string;
+  notes?: string;
+  customer_reference?: string;
+}
+
+export interface QuoteWithLines {
+  quote: QuoteComplete;
+  lines: QuoteLine[];
+}
+
+export interface QuoteConversionResult {
+  invoice_id: number;
+  invoice_number: string;
+}
+
 // ============================================================================
 // ENUMS AND CONSTANTS
 // ============================================================================

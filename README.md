@@ -105,7 +105,7 @@ If you encounter issues or have suggestions, please open an issue on GitHub!
 
 ### Prerequisites
 
-- Node.js >= 20.0.0
+- Node.js >= 22.13.0
 - npm >= 10.0.0
 
 ### From Source

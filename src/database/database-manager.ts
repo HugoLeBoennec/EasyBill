@@ -11,6 +11,58 @@ import { app } from 'electron';
 import type { DatabaseInfo, DatabaseStats } from './types';
 // Import SQL schema as a string (Vite handles this automatically with ?raw suffix)
 import schemaSql from './schema.sql?raw';
+import migration002Sql from './migrations/002_add_quotes_and_signatures.sql?raw';
+
+/**
+ * Incremental migrations applied (in order) on top of schema.sql.
+ * Each one is recorded in schema_migrations and runs only once.
+ */
+const MIGRATIONS: { version: string; sql: string }[] = [
+  { version: '002', sql: migration002Sql },
+];
+
+/**
+ * Apply pending migrations on an open connection.
+ * Works for both fresh databases (schema.sql just applied) and existing ones.
+ * Exported separately so it can be exercised without Electron.
+ */
+export function runMigrations(
+  db: Database.Database,
+  migrations: { version: string; sql: string }[] = MIGRATIONS
+): string[] {
+  const applied: string[] = [];
+  const isApplied = db.prepare(
+    'SELECT 1 FROM schema_migrations WHERE version = ?'
+  );
+
+  for (const migration of migrations) {
+    if (isApplied.get(migration.version)) continue;
+
+    // SQLite has no "ADD COLUMN IF NOT EXISTS": drop ALTERs whose column is
+    // already there so a partially migrated database can still be upgraded.
+    const sql = migration.sql.replace(
+      /ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)[^;]*;/gi,
+      (statement, table: string, column: string) => {
+        const columns = db
+          .prepare(`SELECT name FROM pragma_table_info('${table}')`)
+          .all() as { name: string }[];
+        return columns.some((c) => c.name === column) ? '' : statement;
+      }
+    );
+
+    // DDL is transactional in SQLite: either the whole migration applies or none
+    db.transaction(() => {
+      db.exec(sql);
+      db.prepare(
+        'INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (?, ?)'
+      ).run(migration.version, `migration_${migration.version}`);
+    })();
+
+    applied.push(migration.version);
+  }
+
+  return applied;
+}
 
 /**
  * Database Manager Singleton
@@ -84,6 +136,12 @@ export class DatabaseManager {
     // Execute schema (imported as string at build time)
     this.db.exec(schemaSql);
 
+    // Apply incremental migrations (quotes, signatures, payment terms, ...)
+    const applied = runMigrations(this.db);
+    if (applied.length > 0) {
+      console.log(`Migrations applied: ${applied.join(', ')}`);
+    }
+
     console.log('Database schema applied successfully');
   }
 
@@ -139,7 +197,7 @@ export class DatabaseManager {
     // Get last migration
     const lastMigration = db
       .prepare(
-        'SELECT version FROM schema_migrations ORDER BY applied_at DESC LIMIT 1'
+        'SELECT version FROM schema_migrations ORDER BY applied_at DESC, id DESC LIMIT 1'
       )
       .get() as { version: string } | undefined;
 
@@ -165,6 +223,9 @@ export class DatabaseManager {
         (SELECT COUNT(*) FROM invoices) as total_invoices,
         (SELECT COUNT(*) FROM invoices WHERE status = 'draft') as draft_invoices,
         (SELECT COUNT(*) FROM invoices WHERE status = 'finalized') as finalized_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE status = 'sent') as sent_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE is_signed = 1) as signed_invoices,
+        (SELECT COUNT(*) FROM quotes) as total_quotes,
         (SELECT COUNT(*) FROM parties) as total_parties,
         (SELECT COUNT(*) FROM parties WHERE party_type = 'customer') as total_customers,
         (SELECT COUNT(*) FROM einvoice_queue WHERE queue_status IN ('pending', 'failed')) as pending_einvoices,
@@ -182,21 +243,9 @@ export class DatabaseManager {
   public async backup(backupPath: string): Promise<void> {
     const db = this.getConnection();
 
-    // Use SQLite backup API
-    const backup = db.backup(backupPath);
-
-    return new Promise((resolve, reject) => {
-      try {
-        while (!backup.step(100)) {
-          // Continue backup
-        }
-        backup.finish();
-        resolve();
-      } catch (error) {
-        backup.finish();
-        reject(error);
-      }
-    });
+    // better-sqlite3's online backup API: copies the database page by page
+    // and resolves once the backup file is complete
+    await db.backup(backupPath);
   }
 
   /**

@@ -6,6 +6,30 @@
 
 import type Database from 'better-sqlite3';
 import type { Party, PartyFilter, NewRecord, UpdateRecord } from '../types';
+import { bindColumns, buildSetClause } from './sql-helpers';
+
+const PARTY_COLUMNS = [
+  'party_type',
+  'legal_name',
+  'trading_name',
+  'legal_form',
+  'siren',
+  'siret',
+  'vat_number',
+  'address_line1',
+  'address_line2',
+  'postal_code',
+  'city',
+  'state_region',
+  'country_code',
+  'contact_name',
+  'phone',
+  'email',
+  'website',
+  'electronic_address',
+  'electronic_address_scheme',
+  'active',
+] as const;
 
 export class PartyRepository {
   constructor(private db: Database.Database) {}
@@ -31,7 +55,10 @@ export class PartyRepository {
         @active
       )
     `);
-    const result = stmt.run(party);
+    // Optional fields may be omitted: bind them as NULL / schema defaults
+    const result = stmt.run(
+      bindColumns(party, PARTY_COLUMNS, { country_code: 'FR', active: 1 })
+    );
     return result.lastInsertRowid as number;
   }
 
@@ -94,10 +121,9 @@ export class PartyRepository {
    */
   findCompany(): Party | undefined {
     const stmt = this.db.prepare(
-      'SELECT * FROM parties WHERE party_type = ? LIMIT 1',
-'company'
+      'SELECT * FROM parties WHERE party_type = ? ORDER BY id LIMIT 1'
     );
-    return stmt.get() as Party | undefined;
+    return stmt.get('company') as Party | undefined;
   }
 
   /**
@@ -118,12 +144,11 @@ export class PartyRepository {
    * Update party
    */
   update(id: number, updates: UpdateRecord<Party>): boolean {
-    const fields = Object.keys(updates);
-    if (fields.length === 0) return false;
+    const { clause: setClause, params } = buildSetClause(updates);
+    if (!setClause) return false;
 
-    const setClause = fields.map((field) => `${field} = @${field}`).join(', ');
     const stmt = this.db.prepare(`UPDATE parties SET ${setClause} WHERE id = @id`);
-    const result = stmt.run({ ...updates, id });
+    const result = stmt.run({ ...params, id });
     return result.changes > 0;
   }
 

@@ -6,7 +6,7 @@ import { app } from 'electron';
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
-export const resolveHtmlPath = (htmlFileName: string) => {
+export const resolveHtmlPath = (_htmlFileName: string) => {
   // In Electron Forge with Vite, MAIN_WINDOW_VITE_DEV_SERVER_URL is set in development
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     return MAIN_WINDOW_VITE_DEV_SERVER_URL;

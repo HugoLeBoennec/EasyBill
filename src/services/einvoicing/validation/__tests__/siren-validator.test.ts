@@ -280,7 +280,7 @@ describe('SIRENValidator', () => {
       it('should throw with correct error code', () => {
         try {
           validator.assertValidSIREN('123456789');
-          fail('Should have thrown');
+          expect.fail('Should have thrown');
         } catch (error) {
           expect(error).toBeInstanceOf(ValidationError);
           expect((error as ValidationError).code).toBe('INVALID_SIREN');
@@ -301,7 +301,7 @@ describe('SIRENValidator', () => {
       it('should throw with correct error code', () => {
         try {
           validator.assertValidSIRET('12345678900074');
-          fail('Should have thrown');
+          expect.fail('Should have thrown');
         } catch (error) {
           expect(error).toBeInstanceOf(ValidationError);
           expect((error as ValidationError).code).toBe('INVALID_SIRET');

@@ -1,5 +1,3 @@
-import { Children } from 'react';
-
 const TableHeader = () => {
   return (
     <thead className="bg-slate-50 border-b border-slate-200">

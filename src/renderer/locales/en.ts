@@ -1,22 +1,58 @@
-export default {
+import type { Strings } from './fr';
+
+// Typed against the French strings so both locales keep the same keys
+const en: Strings = {
   common: {},
   nav: {
-    home: 'Accueil',
+    home: 'Home',
     dashboard: 'Dashboard',
+    invoices: 'Invoices',
+    quotes: 'Quotes',
+    customers: 'Customers',
     setting: 'Settings',
+    test: 'Test (dev)',
   },
   dashboardPage: {
     pageName: 'Dashboard',
     revenue: 'Revenue',
+    companyMissingTitle: 'Your company profile is not configured',
+    companyMissingDesc:
+      'Your invoices must show your legal identity (legal name, SIRET, address, VAT). Fill it in before invoicing.',
+    companyIncompleteTitle: 'Your company profile is incomplete',
+    companyMissingAction: 'Set up my company',
   },
   settingPage: {
-    pageName: 'Setting',
-    company: 'Company name',
-    address: 'Address',
-    zip: 'ZIP',
-    city: 'City',
-    phone: 'Mobile Number',
-    legal: 'Legals',
+    pageName: 'Settings',
+    subtitle: 'Manage your company and application settings',
+    configuration: 'Configuration',
+    companyTitle: 'My company',
+    companyDesc: 'Seller legal identity printed on your invoices and quotes',
+    companyMissing: 'TO COMPLETE',
+    einvoicingTitle: 'Electronic invoicing (2026)',
+    einvoicingDesc: 'E-invoicing compliance settings',
+    backupTitle: 'Backup',
+    backupDesc:
+      'All your data is stored locally in a single file. Back it up regularly to an external drive.',
+    backupButton: 'Back up database…',
+    restoreButton: 'Restore a backup…',
+    backupRunning: 'Backing up…',
+    restoreRunning: 'Restoring…',
+    backupDone: 'Backup saved:',
+    restoreDone: 'Database restored. A copy of the previous database was kept:',
+    restoreWarning:
+      'Restoring replaces all current data with the content of the backup.',
+    actionFailed: 'The operation failed:',
+    dbInfoTitle: 'Database',
+    dbPath: 'Location',
+    dbSize: 'Size',
+    dbVersion: 'Schema version',
+    dbTables: 'Tables',
+    statInvoices: 'Invoices',
+    statDrafts: 'Drafts',
+    statQuotes: 'Quotes',
+    statCustomers: 'Customers',
+    statPending: 'Pending e-invoices',
+    dbUnavailable: 'Database information unavailable.',
   },
   eInvoicingPage: {
     pageName: 'Electronic Invoicing',
@@ -65,3 +101,5 @@ export default {
     complianceWarningDesc: 'All companies must be able to receive electronic invoices. Large companies and mid-sized enterprises must also issue them.',
   },
 };
+
+export default en;

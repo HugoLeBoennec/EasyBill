@@ -11,10 +11,70 @@ import type {
   PATransmissionLog,
   ComplianceTracking,
   EInvoicePending,
-  EInvoiceFilter,
   NewRecord,
   UpdateRecord,
 } from '../types';
+import { bindColumns, buildSetClause } from './sql-helpers';
+
+const METADATA_COLUMNS = [
+  'invoice_id',
+  'invoice_format',
+  'format_profile',
+  'customization_id',
+  'profile_id',
+  'xml_file_path',
+  'pdf_file_path',
+  'xml_hash',
+  'pdf_hash',
+  'validated',
+  'validation_errors',
+  'validation_date',
+  'pa_platform',
+  'pa_enabled',
+  'einvoice_status',
+  'generated_at',
+] as const;
+
+const QUEUE_COLUMNS = [
+  'invoice_id',
+  'direction',
+  'priority',
+  'pa_platform',
+  'pa_endpoint',
+  'queue_status',
+  'attempt_count',
+  'max_attempts',
+  'scheduled_for',
+] as const;
+
+const TRANSMISSION_LOG_COLUMNS = [
+  'queue_id',
+  'invoice_id',
+  'direction',
+  'pa_platform',
+  'endpoint_url',
+  'http_method',
+  'request_headers',
+  'request_body',
+  'response_status',
+  'response_headers',
+  'response_body',
+  'request_duration_ms',
+  'transmission_status',
+  'error_message',
+  'error_code',
+  'pa_invoice_id',
+  'pa_tracking_number',
+] as const;
+
+const COMPLIANCE_COLUMNS = [
+  'invoice_id',
+  'requires_einvoice',
+  'einvoice_mandatory_date',
+  'is_compliant',
+  'compliance_issues',
+  'retention_until',
+] as const;
 
 export class EInvoiceRepository {
   constructor(private db: Database.Database) {}
@@ -37,7 +97,14 @@ export class EInvoiceRepository {
         @pa_platform, @pa_enabled, @einvoice_status, @generated_at
       )
     `);
-    const result = stmt.run(metadata);
+    // Optional fields may be omitted: bind them as NULL / schema defaults
+    const result = stmt.run(
+      bindColumns(metadata, METADATA_COLUMNS, {
+        validated: 0,
+        pa_enabled: 0,
+        einvoice_status: 'draft',
+      })
+    );
     return result.lastInsertRowid as number;
   }
 
@@ -49,14 +116,13 @@ export class EInvoiceRepository {
   }
 
   updateMetadata(id: number, updates: UpdateRecord<EInvoiceMetadata>): boolean {
-    const fields = Object.keys(updates);
-    if (fields.length === 0) return false;
+    const { clause: setClause, params } = buildSetClause(updates);
+    if (!setClause) return false;
 
-    const setClause = fields.map((field) => `${field} = @${field}`).join(', ');
     const stmt = this.db.prepare(
       `UPDATE einvoice_metadata SET ${setClause} WHERE id = @id`
     );
-    const result = stmt.run({ ...updates, id });
+    const result = stmt.run({ ...params, id });
     return result.changes > 0;
   }
 
@@ -74,7 +140,14 @@ export class EInvoiceRepository {
         @queue_status, @attempt_count, @max_attempts, @scheduled_for
       )
     `);
-    const result = stmt.run(item);
+    const result = stmt.run(
+      bindColumns(item, QUEUE_COLUMNS, {
+        priority: 5,
+        queue_status: 'pending',
+        attempt_count: 0,
+        max_attempts: 3,
+      })
+    );
     return result.lastInsertRowid as number;
   }
 
@@ -165,7 +238,9 @@ export class EInvoiceRepository {
         @pa_invoice_id, @pa_tracking_number
       )
     `);
-    const result = stmt.run(log);
+    const result = stmt.run(
+      bindColumns(log, TRANSMISSION_LOG_COLUMNS, { http_method: 'POST' })
+    );
     return result.lastInsertRowid as number;
   }
 
@@ -202,7 +277,12 @@ export class EInvoiceRepository {
         @is_compliant, @compliance_issues, @retention_until
       )
     `);
-    const result = stmt.run(tracking);
+    const result = stmt.run(
+      bindColumns(tracking, COMPLIANCE_COLUMNS, {
+        requires_einvoice: 0,
+        is_compliant: 0,
+      })
+    );
     return result.lastInsertRowid as number;
   }
 
@@ -214,14 +294,13 @@ export class EInvoiceRepository {
   }
 
   updateCompliance(id: number, updates: UpdateRecord<ComplianceTracking>): boolean {
-    const fields = Object.keys(updates);
-    if (fields.length === 0) return false;
+    const { clause: setClause, params } = buildSetClause(updates);
+    if (!setClause) return false;
 
-    const setClause = fields.map((field) => `${field} = @${field}`).join(', ');
     const stmt = this.db.prepare(
       `UPDATE compliance_tracking SET ${setClause} WHERE id = @id`
     );
-    const result = stmt.run({ ...updates, id });
+    const result = stmt.run({ ...params, id });
     return result.changes > 0;
   }
 
@@ -265,9 +344,9 @@ export class EInvoiceRepository {
     const stmt = this.db.prepare(`
       SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN is_compliant = 1 THEN 1 ELSE 0 END) as compliant,
-        SUM(CASE WHEN is_compliant = 0 THEN 1 ELSE 0 END) as non_compliant,
-        SUM(CASE WHEN is_compliant IS NULL THEN 1 ELSE 0 END) as pending
+        COALESCE(SUM(CASE WHEN is_compliant = 1 THEN 1 ELSE 0 END), 0) as compliant,
+        COALESCE(SUM(CASE WHEN is_compliant = 0 THEN 1 ELSE 0 END), 0) as non_compliant,
+        COALESCE(SUM(CASE WHEN is_compliant IS NULL THEN 1 ELSE 0 END), 0) as pending
       FROM compliance_tracking
     `);
     return stmt.get() as any;
@@ -282,8 +361,8 @@ export class EInvoiceRepository {
     const stmt = this.db.prepare(`
       SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN transmission_status = 'success' THEN 1 ELSE 0 END) as success,
-        SUM(CASE WHEN transmission_status = 'failure' THEN 1 ELSE 0 END) as failure,
+        COALESCE(SUM(CASE WHEN transmission_status = 'success' THEN 1 ELSE 0 END), 0) as success,
+        COALESCE(SUM(CASE WHEN transmission_status = 'failure' THEN 1 ELSE 0 END), 0) as failure,
         COALESCE(AVG(request_duration_ms), 0) as avg_duration_ms
       FROM pa_transmission_log
     `);

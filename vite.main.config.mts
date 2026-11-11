@@ -5,14 +5,14 @@ export default defineConfig({
   build: {
     rollupOptions: {
       external: [
-        // Externalize native modules
+        // Native module: cannot be bundled. forge.config.ts copies it (and
+        // its runtime dependencies) into the packaged app.
         'better-sqlite3',
-        // Externalize Electron modules
+        // Provided by the Electron runtime
         'electron',
-        'electron-updater',
-        'electron-log',
-        'electron-debug',
-        'electron-devtools-installer',
+        // Everything else (electron-log, electron-updater, ...) is pure
+        // JavaScript and is bundled into main.js: the packaged app ships
+        // without a node_modules folder for them.
       ],
     },
   },

@@ -120,7 +120,7 @@ export class PDFGenerator {
     options?: PDFGenerationOptions
   ): Promise<void> {
     const page = pdfDoc.addPage([595.276, 841.89]); // A4 size in points
-    const { width, height } = page.getSize();
+    const { height } = page.getSize();
 
     // Load fonts
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -159,7 +159,7 @@ export class PDFGenerator {
     yPosition = this.drawPaymentInfo(page, invoice, yPosition - 30, regularFont, boldFont, labels);
 
     // Footer
-    this.drawFooter(page, invoice, regularFont, options?.footerText, labels);
+    this.drawFooter(page, regularFont, options?.footerText, labels);
   }
 
   /**
@@ -229,7 +229,6 @@ export class PDFGenerator {
     labels: any
   ): Promise<number> {
     const { width } = page.getSize();
-    const columnWidth = (width - 100) / 2;
 
     // Seller (left column)
     page.drawText(labels.seller, {
@@ -629,7 +628,6 @@ export class PDFGenerator {
    */
   private drawFooter(
     page: PDFPage,
-    invoice: Invoice,
     regularFont: PDFFont,
     footerText?: string,
     labels?: any

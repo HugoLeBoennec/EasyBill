@@ -279,7 +279,29 @@ export interface DocumentReference {
 /**
  * Complete Invoice Document (EN16931 Semantic Model)
  */
+/**
+ * French legal mentions printed on the human-readable invoice (PDF).
+ * Ready-to-print texts built by the caller; generators print them verbatim.
+ */
+export interface InvoiceLegalMentions {
+  /** e.g. "SAS au capital de 10 000 € – RCS Paris 123 456 789 – APE 6201Z" */
+  sellerLegalLine?: string;
+  /** e.g. "TVA non applicable, art. 293 B du CGI" */
+  vatExemptionText?: string;
+  /** e.g. "Paiement à 30 jours" */
+  paymentTermsText?: string;
+  /** Late-payment penalty rate mention (art. L441-10 du Code de commerce) */
+  latePenaltyText?: string;
+  /** Fixed 40 € recovery fee mention */
+  recoveryFeeText?: string;
+  /** Early-payment discount mention, e.g. "Pas d'escompte pour paiement anticipé" */
+  earlyPaymentDiscountText?: string;
+  bankDetails?: { iban?: string; bic?: string; accountHolder?: string };
+}
+
 export interface Invoice {
+  /** French legal mentions for the PDF rendering (not part of EN16931 XML) */
+  legalMentions?: InvoiceLegalMentions;
   // BG-2: Process control
   customizationId: string;       // BT-24 (e.g., 'urn:cen.eu:en16931:2017#compliant#urn:fac-turx.eu:1p0:extended')
   profileId: string;             // BT-23 (e.g., 'urn:fac-turx.eu:1p0:basic')

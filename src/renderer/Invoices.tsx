@@ -208,7 +208,7 @@ const Invoices = () => {
   const runAction = async (
     id: number,
     action: () => Promise<{ success: boolean; error?: string }>,
-    successMessage: string,
+    successMessage: string | (() => string),
     failureMessage: string
   ) => {
     setBusyId(id);
@@ -217,7 +217,10 @@ const Invoices = () => {
     try {
       const response = await action();
       if (response.success) {
-        setFeedback({ type: 'success', message: successMessage });
+        setFeedback({
+          type: 'success',
+          message: typeof successMessage === 'function' ? successMessage() : successMessage,
+        });
       } else {
         setFeedback({ type: 'error', message: response.error || failureMessage });
       }
@@ -240,28 +243,25 @@ const Invoices = () => {
       'La suppression a échoué.'
     );
 
-  const handleFinalize = async (id: number) => {
-    await runAction(
+  const handleFinalize = (id: number) => {
+    let finalizedNumber: string | undefined;
+    return runAction(
       id,
       async () => {
         const response = await window.electron.invoice.finalize(id);
-        if (!response.success) return response;
-        const updated = await window.electron.invoice.get(id);
-        finalizedNumber = updated.data?.invoice_number;
+        if (response.success) {
+          const updated = await window.electron.invoice.get(id);
+          finalizedNumber = updated.data?.invoice_number;
+        }
         return response;
       },
-      'Facture finalisée.',
+      () =>
+        finalizedNumber
+          ? `Facture finalisée sous le numéro ${finalizedNumber}.`
+          : 'Facture finalisée.',
       'La finalisation a échoué.'
     );
-    if (finalizedNumber) {
-      setFeedback((current) =>
-        current?.type === 'success'
-          ? { type: 'success', message: `Facture finalisée sous le numéro ${finalizedNumber}.` }
-          : current
-      );
-    }
   };
-  let finalizedNumber: string | undefined;
 
   const handleMarkSent = (id: number) =>
     runAction(

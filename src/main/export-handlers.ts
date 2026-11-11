@@ -160,7 +160,10 @@ export function registerExportHandlers(getDB: () => DatabaseService): void {
         const exported: InvoiceExportResult = { canceled: false, path: filePath, format };
         return { success: true, data: exported };
       } catch (error: unknown) {
-        console.error('Invoice export failed:', error);
+        // Missing data is an expected situation, reported to the user: only log real failures
+        if (!(error instanceof InvoiceMappingError)) {
+          console.error('Invoice export failed:', error);
+        }
         return { success: false, error: toFrenchError(error) };
       }
     }

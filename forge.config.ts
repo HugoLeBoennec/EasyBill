@@ -12,16 +12,31 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 /**
  * Modules that the Vite main bundle leaves as `require()` calls (see
- * `external` in vite.main.config.mts) plus their runtime dependencies.
- * The Vite plugin does not package node_modules, so they are copied by hand.
+ * `external` in vite.main.config.mts). The Vite plugin does not package
+ * node_modules, so these are copied by hand together with their production
+ * dependencies, which are read from each package.json.
  */
 const RUNTIME_NODE_MODULES = [
   'better-sqlite3',
-  'bindings',
-  'file-uri-to-path',
-  // loaded with a plain require() in src/main/main.ts (ships its own debug/ms)
+  // loaded with a plain require() in src/main/main.ts
   'electron-squirrel-startup',
 ];
+
+const NODE_MODULES_DIR = path.join(__dirname, 'node_modules');
+
+function collectRuntimeModules(names: string[], seen = new Set<string>()): Set<string> {
+  for (const name of names) {
+    if (seen.has(name)) continue;
+    const manifest = path.join(NODE_MODULES_DIR, name, 'package.json');
+    if (!fs.existsSync(manifest)) {
+      throw new Error(`Runtime module "${name}" is not installed at the top of node_modules`);
+    }
+    seen.add(name);
+    const pkg = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+    collectRuntimeModules(Object.keys(pkg.dependencies ?? {}), seen);
+  }
+  return seen;
+}
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -34,8 +49,8 @@ const config: ForgeConfig = {
     // Runs before the native rebuild, so the copied better-sqlite3 is then
     // rebuilt for Electron's ABI inside the package (not in ./node_modules).
     packageAfterCopy: async (_forgeConfig, buildPath) => {
-      for (const name of RUNTIME_NODE_MODULES) {
-        const source = path.join(__dirname, 'node_modules', name);
+      for (const name of collectRuntimeModules(RUNTIME_NODE_MODULES)) {
+        const source = path.join(NODE_MODULES_DIR, name);
         const target = path.join(buildPath, 'node_modules', name);
         await fs.promises.cp(source, target, { recursive: true });
       }

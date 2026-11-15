@@ -1424,13 +1424,13 @@ export class InvoiceRepository {
     credit_notes_amount: number;
     net_revenue: number;
   } {
-    // Calculate awaiting payment (sent but not paid, not yet overdue)
+    // Calculate awaiting payment (issued, i.e. finalized or sent, but not paid, not yet overdue)
     const awaitingStmt = this.db.prepare(`
       SELECT
         COALESCE(SUM(${BALANCE_SQL}), 0) as amount,
         COUNT(*) as count
       FROM invoices
-      WHERE status = 'sent'
+      WHERE status IN ('finalized', 'sent')
         AND invoice_type != 'credit_note'
         AND payment_status != 'paid'
         AND ${BALANCE_SQL} > 0
@@ -1447,7 +1447,7 @@ export class InvoiceRepository {
         COALESCE(SUM(${BALANCE_SQL}), 0) as amount,
         COUNT(*) as count
       FROM invoices
-      WHERE status = 'sent'
+      WHERE status IN ('finalized', 'sent')
         AND invoice_type != 'credit_note'
         AND payment_status != 'paid'
         AND ${BALANCE_SQL} > 0

@@ -271,7 +271,7 @@ const Quotes = () => {
         <input
           type="search"
           aria-label="Rechercher un devis"
-          className="ml-auto w-64 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          className="ml-auto w-80 max-w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           placeholder="Rechercher (numéro, client, notes)"
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
@@ -343,25 +343,25 @@ const Quotes = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Numéro
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Client
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Date
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Valable jusqu'au
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Total TTC
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Statut
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -374,7 +374,7 @@ const Quotes = () => {
 
                 return (
                   <tr key={quote.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4 whitespace-nowrap">
                       <Link
                         to={`/quotes/${quote.id}`}
                         className="text-blue-600 hover:underline font-medium"
@@ -382,7 +382,7 @@ const Quotes = () => {
                         {quote.quote_number}
                       </Link>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
                         {quote.customer_name || 'N/A'}
                       </div>
@@ -392,10 +392,10 @@ const Quotes = () => {
                         </div>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                       {formatDate(quote.quote_date)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <td className="px-3 py-4 whitespace-nowrap text-sm">
                       <div className="text-gray-900">
                         {formatDate(quote.valid_until)}
                       </div>
@@ -405,7 +405,7 @@ const Quotes = () => {
                         </div>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right">
+                    <td className="px-3 py-4 whitespace-nowrap text-right">
                       <div className="text-sm font-medium text-gray-900">
                         {formatAmount(quote.total_amount)}
                       </div>
@@ -413,11 +413,11 @@ const Quotes = () => {
                         HT: {formatAmount(quote.subtotal_amount)}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4 whitespace-nowrap">
                       {getStatusBadge(quote.status)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex justify-end items-center gap-3">
+                    <td className="px-3 py-4 text-right text-sm font-medium">
+                      <div className="flex flex-wrap justify-end items-center gap-x-3 gap-y-1 min-w-[12rem]">
                         {nextStatuses.length > 0 && (
                           <select
                             aria-label={`Changer le statut du devis ${quote.quote_number}`}

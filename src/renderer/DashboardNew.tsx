@@ -12,6 +12,7 @@ import {
   isCompanyProfileComplete,
   isPlaceholderCompany,
 } from './pages/companyValidation';
+import { StatusBadge, formatAmount, formatDate } from './Invoices';
 
 interface Stats {
   total_invoices: number;
@@ -105,14 +106,6 @@ const DashboardNew = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatAmount = (amount: number): string => {
-    return `€${(amount / 100).toFixed(2)}`;
-  };
-
-  const formatDate = (dateStr: string): string => {
-    return new Date(dateStr).toLocaleDateString('fr-FR');
   };
 
   if (loading) {
@@ -332,7 +325,11 @@ const DashboardNew = () => {
                       {invoice.invoice_type === 'credit_note' ? '−' : ''}
                       {formatAmount(invoice.total_amount)}
                     </div>
-                    <div className="text-xs text-gray-500">{invoice.status}</div>
+                    <StatusBadge
+                      status={invoice.status}
+                      paymentStatus={invoice.payment_status}
+                      invoiceType={invoice.invoice_type}
+                    />
                   </div>
                 </div>
               ))}

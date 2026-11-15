@@ -67,4 +67,67 @@ describe('quote expiry', () => {
     expect(repo.expireOverdue('2026-07-01')).toBe(1);
     expect(statusOf(id)).toBe('expired');
   });
+
+  describe('reviving an expired quote', () => {
+    const lines = [{ item_name: 'Audit', quantity: 1, unit_price: 10000, vat_rate: 20 }];
+    const input = (validUntil: string) => ({
+      quote_date: '2026-01-01',
+      valid_until: validUntil,
+      customer_id: customerId,
+    });
+
+    it('returns to draft when the validity date is extended to today or later', () => {
+      for (const date of [isoDate(0), isoDate(30)]) {
+        const id = create(isoDate(-3), 'sent');
+        db.prepare("UPDATE quotes SET sent_at = '2026-01-02' WHERE id = ?").run(id);
+        repo.expireOverdue();
+        expect(statusOf(id)).toBe('expired');
+
+        repo.updateWithLines(id, input(date), lines);
+        expect(statusOf(id)).toBe('draft');
+        expect(repo.expireOverdue()).toBe(0);
+        expect(statusOf(id)).toBe('draft');
+        expect(repo.findById(id)!.sent_at).toBeNull();
+      }
+    });
+
+    it('also works through a plain update() of valid_until', () => {
+      const id = create(isoDate(-3));
+      repo.expireOverdue();
+      repo.update(id, { valid_until: isoDate(10) });
+      expect(statusOf(id)).toBe('draft');
+    });
+
+    it('stays expired when the new date is still in the past', () => {
+      const id = create(isoDate(-10));
+      repo.expireOverdue();
+      repo.updateWithLines(id, input(isoDate(-1)), lines);
+      expect(statusOf(id)).toBe('expired');
+    });
+
+    it('does not touch the status of quotes that are not expired', () => {
+      const accepted = create(isoDate(5), 'accepted');
+      repo.update(accepted, { valid_until: isoDate(40) });
+      expect(statusOf(accepted)).toBe('accepted');
+    });
+
+    it('refuses to move an overdue expired quote back to draft or sent without a new date', () => {
+      const id = create(isoDate(-3));
+      repo.expireOverdue();
+      expect(() => repo.setStatus(id, 'draft')).toThrow(/prolongez/);
+      expect(() => repo.setStatus(id, 'sent')).toThrow(/prolongez/);
+      expect(statusOf(id)).toBe('expired');
+      // once the date is extended it is already a draft again, and may be sent
+      repo.update(id, { valid_until: isoDate(7) });
+      expect(repo.setStatus(id, 'sent')).toBe(true);
+      expect(statusOf(id)).toBe('sent');
+    });
+
+    it('lets a manually expired quote (date still valid) go back to draft', () => {
+      const id = create(isoDate(7), 'sent');
+      repo.setStatus(id, 'expired');
+      expect(repo.setStatus(id, 'draft')).toBe(true);
+      expect(statusOf(id)).toBe('draft');
+    });
+  });
 });

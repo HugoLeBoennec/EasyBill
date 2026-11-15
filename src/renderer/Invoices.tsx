@@ -140,7 +140,7 @@ export const StatusBadge = ({
     shown;
   return (
     <span
-      className={`px-2 py-1 text-xs font-semibold rounded-full whitespace-nowrap ${
+      className={`inline-block text-center px-2 py-1 text-xs font-semibold rounded-full ${
         STATUS_STYLES[shown] || 'bg-gray-200 text-gray-800'
       }`}
     >
@@ -246,10 +246,10 @@ export const InvoiceExportButtons = ({
   const className =
     variant === 'button'
       ? 'px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50'
-      : 'px-2 py-1 text-xs border border-gray-300 text-gray-700 rounded hover:bg-gray-100 disabled:opacity-50';
+      : 'px-2 py-1 text-xs whitespace-nowrap border border-gray-300 text-gray-700 rounded hover:bg-gray-100 disabled:opacity-50';
 
   return (
-    <span className="inline-flex gap-1 items-center">
+    <span className="inline-flex flex-wrap justify-end gap-1 items-center">
       {EXPORT_FORMATS.map(({ format, label, title }) => (
         <button
           key={format}
@@ -723,12 +723,12 @@ const Invoices = () => {
                 {COLUMNS.map((title) => (
                   <th
                     key={title}
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                   >
                     {title}
                   </th>
                 ))}
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -752,12 +752,12 @@ const Invoices = () => {
 
                 return [
                   <tr key={id} className="hover:bg-gray-50">
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-2 whitespace-nowrap">
+                    <td className="px-3 py-4">
+                      <div className="flex flex-wrap items-center gap-x-2">
                         <TypeBadge invoiceType={invoice.invoice_type} />
                         <Link
                           to={`/invoices/${id}`}
-                          className={`hover:underline font-medium ${
+                          className={`hover:underline font-medium whitespace-nowrap ${
                             isDraft ? 'text-gray-500 italic' : 'text-blue-600'
                           }`}
                         >
@@ -792,7 +792,7 @@ const Invoices = () => {
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="px-3 py-4">
                       <div className="text-sm font-medium text-gray-900">
                         {invoice.buyer_name || 'N/A'}
                       </div>
@@ -800,10 +800,10 @@ const Invoices = () => {
                         <div className="text-sm text-gray-500">SIRET: {invoice.buyer_siret}</div>
                       )}
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                       {formatDate(invoice.invoice_date)}
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4 whitespace-nowrap">
                       <div
                         className={`text-sm font-medium ${
                           creditNote ? 'text-orange-700' : 'text-gray-900'
@@ -823,7 +823,7 @@ const Invoices = () => {
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap text-sm">
+                    <td className="px-3 py-4 whitespace-nowrap text-sm">
                       {isDraft || creditNote ? (
                         <span className="text-gray-400">-</span>
                       ) : overpaid > 0 ? (
@@ -838,21 +838,21 @@ const Invoices = () => {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4">
                       <StatusBadge
                         status={invoice.status}
                         paymentStatus={invoice.payment_status}
                         invoiceType={invoice.invoice_type}
                       />
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4 whitespace-nowrap">
                       {invoice.einvoice_status ? (
                         <span className="text-xs text-gray-600">{invoice.einvoice_status}</span>
                       ) : (
                         <span className="text-xs text-gray-400">-</span>
                       )}
                     </td>
-                    <td className="px-4 py-4 text-right text-sm font-medium">
+                    <td className="px-3 py-4 text-right text-sm font-medium">
                       {confirming ? (
                         <div className="inline-flex flex-wrap justify-end items-center gap-3">
                           <span className="text-gray-700 font-normal">

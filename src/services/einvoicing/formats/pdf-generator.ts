@@ -285,6 +285,8 @@ const TABLE_HEADER_HEIGHT = 20;
 
 /** Height of the quote signature block (see drawSignature) */
 const SIGNATURE_HEIGHT = 112;
+/** Room kept under the totals of a quote for the VAT mention and the payment block */
+const QUOTE_TRAILER_HEIGHT = 110;
 
 const BLACK = rgb(0, 0, 0);
 const GREY = rgb(0.4, 0.4, 0.4);
@@ -582,7 +584,7 @@ export class PDFGenerator {
     if (options?.includeLineItems !== false) {
       this.drawLineItems(canvas, invoice, labels, secondary);
     }
-    this.drawTotals(canvas, invoice, labels, primary, isQuote ? SIGNATURE_HEIGHT : 0);
+    this.drawTotals(canvas, invoice, labels, primary, isQuote ? SIGNATURE_HEIGHT + QUOTE_TRAILER_HEIGHT : 0);
     this.drawVatMentions(canvas, invoice);
     this.drawPaymentAndLegalMentions(canvas, invoice, labels);
     if (isQuote) this.drawSignature(canvas, labels);

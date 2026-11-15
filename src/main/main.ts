@@ -8,6 +8,8 @@
  * When running `npm run build` or `npm run build:main`, this file is compiled to
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
+// Must stay the first import: it redirects the data folder for the CI smoke test
+import { isSmokeTest, runSmokeTest } from './smoke-test';
 import path from 'path';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
@@ -15,7 +17,6 @@ import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath, getAssetPath } from './util';
 import { initializeIPC, closeDatabase } from './ipc-handlers';
-import { isSmokeTest, prepareSmokeTest, runSmokeTest } from './smoke-test';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
 if (require('electron-squirrel-startup')) {
@@ -32,10 +33,6 @@ export default class AppUpdater {
 
 let mainWindow: BrowserWindow | null = null;
 
-// CI startup check of the packaged app: runs on a throwaway data folder
-if (isSmokeTest) {
-  prepareSmokeTest();
-}
 
 ipcMain.on('ipc-example', async (event, arg) => {
   const msgTemplate = (pingPong: string) => `IPC test: ${pingPong}`;

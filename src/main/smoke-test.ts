@@ -16,10 +16,13 @@ const TIMEOUT_MS = 60_000;
 
 export const isSmokeTest = process.env.EASYBILL_SMOKE_TEST === '1';
 
-/** Must run before the app is ready, so the real user data is never touched. */
-export function prepareSmokeTest(): void {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'easybill-smoke-'));
-  app.setPath('userData', dir);
+/**
+ * The data folder is redirected here, at import time: this module is the
+ * first import of main.ts, and the database module resolves its path as soon
+ * as it is loaded. The real user data is therefore never touched.
+ */
+if (isSmokeTest) {
+  app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'easybill-smoke-')));
 }
 
 function finish(ok: boolean, details: unknown): void {
@@ -74,6 +77,13 @@ const RENDERER_CHECK = `(async () => {
   return result;
 })()`;
 
+/** Guards the test itself: the database must live in the temporary folder. */
+function isThrowawayDataFolder(result: { migration?: { path?: string } | null }): boolean {
+  const dbPath = result.migration?.path ?? '';
+  return path.resolve(dbPath).startsWith(path.resolve(app.getPath('userData')))
+    && app.getPath('userData').includes('easybill-smoke-');
+}
+
 export function runSmokeTest(window: BrowserWindow): void {
   const timer = setTimeout(
     () => finish(false, { error: `timeout after ${TIMEOUT_MS} ms` }),
@@ -100,7 +110,7 @@ export function runSmokeTest(window: BrowserWindow): void {
         result.company &&
         result.stats &&
         result.errors.length === 0;
-      finish(ok, { ...result, encryptionAvailable: safeStorage.isEncryptionAvailable() });
+      finish(ok && isThrowawayDataFolder(result), { ...result, encryptionAvailable: safeStorage.isEncryptionAvailable() });
     } catch (error) {
       clearTimeout(timer);
       finish(false, { error: error instanceof Error ? error.message : String(error) });

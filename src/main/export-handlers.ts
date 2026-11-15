@@ -16,6 +16,7 @@ import {
   buildExportFilename,
   INVOICE_EXPORT_FORMATS,
   InvoiceMappingError,
+  getInvoiceExportWarnings,
   mapInvoiceToEN16931,
 } from './invoice-mapper';
 import type { InvoiceExportFormat, InvoiceExportSource } from './invoice-mapper';
@@ -26,6 +27,8 @@ export interface InvoiceExportResult {
   /** Absolute path of the written file (absent when canceled) */
   path?: string;
   format: InvoiceExportFormat;
+  /** Non-blocking remarks (missing IBAN, VAT number...), French texts */
+  warnings: string[];
 }
 
 const DIALOG_FILTERS: Record<InvoiceExportFormat, { name: string; extensions: string[] }> = {
@@ -86,7 +89,12 @@ export async function generateInvoiceDocument(
   db: DatabaseService,
   invoiceId: number,
   format: InvoiceExportFormat
-): Promise<{ data: Uint8Array | string; defaultFilename: string; isCreditNote: boolean }> {
+): Promise<{
+  data: Uint8Array | string;
+  defaultFilename: string;
+  isCreditNote: boolean;
+  warnings: string[];
+}> {
   if (!INVOICE_EXPORT_FORMATS.includes(format)) {
     throw new InvoiceMappingError([`Format d'export non pris en charge : ${String(format)}.`]);
   }
@@ -141,6 +149,7 @@ export async function generateInvoiceDocument(
       isCreditNote
     ),
     isCreditNote,
+    warnings: getInvoiceExportWarnings(source),
   };
 }
 
@@ -153,7 +162,7 @@ export function registerExportHandlers(getDB: () => DatabaseService): void {
     'invoice:export',
     async (event, invoiceId: number, format: InvoiceExportFormat = 'facturx-pdf') => {
       try {
-        const { data, defaultFilename, isCreditNote } = await generateInvoiceDocument(
+        const { data, defaultFilename, isCreditNote, warnings } = await generateInvoiceDocument(
           getDB(),
           Number(invoiceId),
           format
@@ -171,7 +180,7 @@ export function registerExportHandlers(getDB: () => DatabaseService): void {
           : await dialog.showSaveDialog(options);
 
         if (choice.canceled || !choice.filePath) {
-          const canceled: InvoiceExportResult = { canceled: true, format };
+          const canceled: InvoiceExportResult = { canceled: true, format, warnings: [] };
           return { success: true, data: canceled };
         }
 
@@ -188,7 +197,12 @@ export function registerExportHandlers(getDB: () => DatabaseService): void {
           await fs.writeFile(filePath, data);
         }
 
-        const exported: InvoiceExportResult = { canceled: false, path: filePath, format };
+        const exported: InvoiceExportResult = {
+          canceled: false,
+          path: filePath,
+          format,
+          warnings,
+        };
         return { success: true, data: exported };
       } catch (error: unknown) {
         // Missing data is an expected situation, reported to the user: only log real failures

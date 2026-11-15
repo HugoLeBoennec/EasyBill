@@ -425,7 +425,15 @@ describe('UBLGenerator', () => {
 
       const xml = ublGenerator.generate(invoice);
 
-      expect(xml).toContain('<cbc:InvoiceTypeCode>381</cbc:InvoiceTypeCode>');
+      expect(xml).toContain('<CreditNote ');
+      expect(xml).toContain('urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2');
+      expect(xml).toContain('<cbc:CreditNoteTypeCode>381</cbc:CreditNoteTypeCode>');
+      expect(xml).toContain('<cac:CreditNoteLine>');
+      expect(xml).toContain('<cbc:CreditedQuantity');
+      expect(xml).not.toContain('InvoicedQuantity');
+      expect(xml).not.toContain('<cac:InvoiceLine>');
+      expect(xml.trim().endsWith('</CreditNote>')).toBe(true);
+      expect(xml).toContain('<cac:BillingReference>');
       expect(xml).toContain('<cac:InvoiceDocumentReference>');
       expect(xml).toContain('INV-2024-999');
     });

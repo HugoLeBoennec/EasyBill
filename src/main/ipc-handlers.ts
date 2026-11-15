@@ -580,7 +580,17 @@ function registerQuoteHandlers(): void {
   // Convert quote to a draft invoice
   ipcMain.handle('quote:convertToInvoice', async (_, id: number) => {
     try {
-      const data = getDB().quotes.convertToInvoice(id);
+      // Payment term of the invoice: the company's default (30 days otherwise)
+      const company = getDB().parties.findAll({ party_type: 'company' })[0] as
+        | { default_payment_terms_days?: number | null }
+        | undefined;
+      const terms = company?.default_payment_terms_days;
+      const data = getDB().quotes.convertToInvoice(
+        id,
+        typeof terms === 'number' && Number.isInteger(terms) && terms >= 0
+          ? { payment_terms_days: terms }
+          : {}
+      );
       return { success: true, data };
     } catch (error: any) {
       return { success: false, error: error.message };

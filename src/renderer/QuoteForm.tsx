@@ -71,13 +71,13 @@ const parseNumber = (value: string): number => {
 };
 
 let lineCounter = 0;
-const newLine = (): LineItem => ({
+const newLine = (vatRate = 20): LineItem => ({
   key: `line-${Date.now()}-${lineCounter++}`,
   item_name: '',
   item_description: '',
   quantity: '1',
   unit_price: '',
-  vat_rate: 20,
+  vat_rate: vatRate,
 });
 
 /** Round half away from zero after removing binary noise (as the repository does) */
@@ -157,8 +157,39 @@ const QuoteForm = () => {
     isEdit ? [] : [newLine()]
   );
   const [errors, setErrors] = useState<FormErrors>({ lineItems: {} });
+  // VAT rate of new lines: 0 % when the company is under the VAT franchise
+  const [defaultVatRate, setDefaultVatRate] = useState(20);
 
   const readOnly = status === 'converted';
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFranchise = async () => {
+      try {
+        const response = await window.electron.party.getCompany();
+        const company = (response.success ? response.data : null) as
+          | { vat_franchise?: unknown }
+          | null
+          | undefined;
+        if (cancelled || !company || !Number(company.vat_franchise)) return;
+        setDefaultVatRate(0);
+        // A brand new quote still holding its untouched first line follows
+        if (!isEdit) {
+          setLineItems((items) =>
+            items.length === 1 && !items[0].item_name && !items[0].unit_price
+              ? [{ ...items[0], vat_rate: 0 }]
+              : items
+          );
+        }
+      } catch {
+        // keep the standard rate
+      }
+    };
+    loadFranchise();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEdit]);
 
   useEffect(() => {
     const loadCustomers = async () => {
@@ -244,7 +275,7 @@ const QuoteForm = () => {
   };
 
   const addLineItem = () => {
-    setLineItems((items) => [...items, newLine()]);
+    setLineItems((items) => [...items, newLine(defaultVatRate)]);
     setErrors((prev) => ({ ...prev, lines: undefined }));
   };
 

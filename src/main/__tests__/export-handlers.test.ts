@@ -125,10 +125,11 @@ describe('invoice:export', () => {
 
     const response = await exportInvoice(invoiceId, 'facturx-pdf');
 
-    expect(response).toEqual({
+    expect(response).toMatchObject({
       success: true,
       data: { canceled: false, path: target, format: 'facturx-pdf' },
     });
+    expect(Array.isArray(response.data.warnings)).toBe(true);
     expect(electronMock.showSaveDialog).toHaveBeenCalledWith(
       expect.objectContaining({ defaultPath: 'Facture-INV-2026-001.pdf' })
     );
@@ -202,13 +203,26 @@ describe('invoice:export', () => {
     );
   });
 
+  it('returns non-blocking warnings (missing IBAN) with the successful export', async () => {
+    configureCompany();
+    service.invoices.finalize(invoiceId);
+    const target = path.join(tmpDir, 'warn.xml');
+    electronMock.showSaveDialog.mockResolvedValue({ canceled: false, filePath: target });
+
+    const response = await exportInvoice(invoiceId, 'ubl');
+
+    expect(response.success).toBe(true);
+    expect(response.data.warnings.some((w: string) => w.includes('IBAN'))).toBe(true);
+    expect(fs.existsSync(target)).toBe(true);
+  });
+
   it('writes nothing when the dialog is cancelled', async () => {
     configureCompany();
     service.invoices.finalize(invoiceId);
     electronMock.showSaveDialog.mockResolvedValue({ canceled: true, filePath: '' });
 
     const response = await exportInvoice(invoiceId, 'ubl');
-    expect(response).toEqual({ success: true, data: { canceled: true, format: 'ubl' } });
+    expect(response).toEqual({ success: true, data: { canceled: true, format: 'ubl', warnings: [] } });
   });
 
   it('turns write failures into a French error', async () => {

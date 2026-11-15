@@ -693,13 +693,18 @@ export class PDFGenerator {
   private drawNotes(canvas: Canvas, invoice: Invoice, labels: Labels): void {
     if (!invoice.note || !invoice.note.trim()) return;
 
-    // The VAT mention is printed under the totals: do not print it twice
-    const mentions = this.vatMentions(invoice).map((m) => m.toLowerCase());
-    const text = invoice.note
+    // The VAT mention is printed under the totals: do not print it twice,
+    // whether it is a whole line of the note or embedded in a longer line
+    let text = invoice.note;
+    for (const mention of this.vatMentions(invoice)) {
+      const escaped = mention.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      text = text.replace(new RegExp(`\\s*${escaped}\\s*\\.?`, 'gi'), '\n');
+    }
+    text = text
       .split(/\r\n|\r|\n/)
-      .filter((line) => !mentions.includes(line.trim().toLowerCase()))
-      .join('\n')
-      .trim();
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+      .join('\n');
     if (!text) return;
 
     const lines: StyledLine[] = [{ text: labels.notes, size: 10, bold: true }];

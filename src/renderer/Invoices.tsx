@@ -23,6 +23,8 @@ type TypeFilter = 'all' | 'invoice' | 'credit_note';
 export interface Feedback {
   type: 'success' | 'error';
   message: string;
+  /** Non-blocking remarks shown in an amber banner under the message */
+  warnings?: string[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -173,19 +175,34 @@ export const FeedbackBanner = ({
       ? 'bg-green-50 border-green-400 text-green-800'
       : 'bg-red-50 border-red-400 text-red-800';
   return (
-    <div
-      role={feedback.type === 'error' ? 'alert' : 'status'}
-      className={`flex justify-between items-start gap-4 border px-4 py-3 rounded mb-4 ${styles}`}
-    >
-      <span className="whitespace-pre-line break-words">{feedback.message}</span>
-      <button
-        type="button"
-        onClick={onClose}
-        className="font-bold leading-none hover:opacity-70"
-        aria-label="Fermer le message"
+    <div className="mb-4">
+      <div
+        role={feedback.type === 'error' ? 'alert' : 'status'}
+        className={`flex justify-between items-start gap-4 border px-4 py-3 rounded ${styles}`}
       >
-        ×
-      </button>
+        <span className="whitespace-pre-line break-words">{feedback.message}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="font-bold leading-none hover:opacity-70"
+          aria-label="Fermer le message"
+        >
+          ×
+        </button>
+      </div>
+      {feedback.warnings && feedback.warnings.length > 0 && (
+        <div
+          role="status"
+          className="mt-2 border border-amber-400 bg-amber-50 text-amber-900 px-4 py-3 rounded"
+        >
+          <p className="font-semibold mb-1">À vérifier (l'export a bien été effectué) :</p>
+          <ul className="list-disc pl-5 space-y-1">
+            {feedback.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 };
@@ -213,6 +230,7 @@ export const InvoiceExportButtons = ({
         onFeedback({
           type: 'success',
           message: `Document exporté : ${response.data.path}`,
+          warnings: response.data.warnings,
         });
       }
     } catch (err: unknown) {

@@ -19,6 +19,7 @@ import {
   InvoiceValidationResult,
   FormatGenerationOptions,
   DocumentReference,
+  InvoiceTypeCode,
 } from './types';
 
 /**
@@ -26,6 +27,7 @@ import {
  */
 const UBL_NAMESPACES = {
   invoice: 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2',
+  creditNote: 'urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2',
   cac: 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2',
   cbc: 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2',
 };
@@ -167,8 +169,10 @@ export class UBLGenerator {
    * Build root Invoice element
    */
   private buildInvoiceElement(invoice: Invoice, indent: number): string {
-    let xml = '<Invoice';
-    xml += ` xmlns="${UBL_NAMESPACES.invoice}"`;
+    const isCredit = invoice.typeCode === InvoiceTypeCode.CREDIT_NOTE;
+    const root = isCredit ? 'CreditNote' : 'Invoice';
+    let xml = `<${root}`;
+    xml += ` xmlns="${isCredit ? UBL_NAMESPACES.creditNote : UBL_NAMESPACES.invoice}"`;
     xml += ` xmlns:cac="${UBL_NAMESPACES.cac}"`;
     xml += ` xmlns:cbc="${UBL_NAMESPACES.cbc}">\n`;
 
@@ -179,10 +183,11 @@ export class UBLGenerator {
     // Invoice identification
     xml += this.element('cbc:ID', invoice.id, indent + 2);
     xml += this.element('cbc:IssueDate', invoice.issueDate, indent + 2);
-    if (invoice.dueDate) {
+    // A UBL CreditNote has no header DueDate and uses CreditNoteTypeCode
+    if (invoice.dueDate && !isCredit) {
       xml += this.element('cbc:DueDate', invoice.dueDate, indent + 2);
     }
-    xml += this.element('cbc:InvoiceTypeCode', invoice.typeCode, indent + 2);
+    xml += this.element(isCredit ? 'cbc:CreditNoteTypeCode' : 'cbc:InvoiceTypeCode', invoice.typeCode, indent + 2);
 
     if (invoice.note) {
       xml += this.element('cbc:Note', this.escapeXml(invoice.note), indent + 2);
@@ -203,7 +208,9 @@ export class UBLGenerator {
     // Document references
     if (invoice.invoiceDocumentReference && invoice.invoiceDocumentReference.length > 0) {
       invoice.invoiceDocumentReference.forEach((ref) => {
-        xml += this.buildDocumentReference(ref, 'InvoiceDocumentReference', indent + 2);
+        xml += `${' '.repeat(indent + 2)}<cac:BillingReference>\n`;
+        xml += this.buildDocumentReference(ref, 'InvoiceDocumentReference', indent + 4);
+        xml += `${' '.repeat(indent + 2)}</cac:BillingReference>\n`;
       });
     }
 
@@ -259,10 +266,10 @@ export class UBLGenerator {
 
     // Invoice lines
     invoice.invoiceLines.forEach((line) => {
-      xml += this.buildInvoiceLine(line, invoice.documentCurrencyCode, indent + 2);
+      xml += this.buildInvoiceLine(line, invoice.documentCurrencyCode, indent + 2, isCredit);
     });
 
-    xml += '</Invoice>';
+    xml += `</${root}>`;
     return xml;
   }
 
@@ -553,9 +560,11 @@ export class UBLGenerator {
   /**
    * Build invoice line element
    */
-  private buildInvoiceLine(line: InvoiceLine, currencyCode: string, indent: number): string {
+  private buildInvoiceLine(line: InvoiceLine, currencyCode: string, indent: number, isCredit = false): string {
     const ind = ' '.repeat(indent);
-    let xml = `${ind}<cac:InvoiceLine>\n`;
+    const lineTag = isCredit ? 'CreditNoteLine' : 'InvoiceLine';
+    const qtyTag = isCredit ? 'CreditedQuantity' : 'InvoicedQuantity';
+    let xml = `${ind}<cac:${lineTag}>\n`;
 
     xml += `${ind}  <cbc:ID>${this.escapeXml(line.id)}</cbc:ID>\n`;
 
@@ -563,7 +572,7 @@ export class UBLGenerator {
       xml += `${ind}  <cbc:Note>${this.escapeXml(line.note)}</cbc:Note>\n`;
     }
 
-    xml += `${ind}  <cbc:InvoicedQuantity unitCode="${line.unitCode}">${line.invoicedQuantity}</cbc:InvoicedQuantity>\n`;
+    xml += `${ind}  <cbc:${qtyTag} unitCode="${line.unitCode}">${line.invoicedQuantity}</cbc:${qtyTag}>\n`;
     xml += `${ind}  <cbc:LineExtensionAmount currencyID="${currencyCode}">${this.formatAmount(line.lineExtensionAmount)}</cbc:LineExtensionAmount>\n`;
 
     if (line.accountingCost) {
@@ -656,7 +665,7 @@ export class UBLGenerator {
     }
     xml += `${ind}  </cac:Price>\n`;
 
-    xml += `${ind}</cac:InvoiceLine>\n`;
+    xml += `${ind}</cac:${lineTag}>\n`;
     return xml;
   }
 

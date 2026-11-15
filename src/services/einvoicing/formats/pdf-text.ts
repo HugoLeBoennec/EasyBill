@@ -80,7 +80,7 @@ export interface CompanyIdLabel {
  * 14 digits = SIRET (the ISO 6523 scheme, when given, wins: 0002 / 0009).
  */
 export function describeCompanyId(id: string, schemeId?: string): CompanyIdLabel {
-  const compact = id.replace(/[\s. ]/g, '');
+  const compact = id.replace(/[\s.\u00a0]/g, '');
   const isDigits = /^\d+$/.test(compact);
   if (schemeId === '0002' || (schemeId === undefined && isDigits && compact.length === 9)) {
     return {

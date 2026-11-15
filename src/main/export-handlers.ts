@@ -120,7 +120,11 @@ export async function generateInvoiceDocument(
       throw new InvoiceMappingError(["La facture d'origine de cet avoir est introuvable."]);
     }
     model.invoiceDocumentReference = [
-      { id: original.invoice_number, documentTypeCode: '380' },
+      {
+        id: original.invoice_number,
+        documentTypeCode: '380',
+        issueDate: original.invoice_date?.slice(0, 10),
+      },
     ];
     // Nothing is to be paid on a credit note: no due date, and the payment
     // terms say what happens to the amount (BR-CO-25 requires one of the two)

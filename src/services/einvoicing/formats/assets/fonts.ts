@@ -12,7 +12,6 @@
  * main process without any asset/loader configuration.
  */
 
-/* eslint-disable */
 export const EASYBILL_SANS_REGULAR_BASE64: string = [
   'AAEAAAALAIAAAwAwT1MvMnvx/igAAAE4AAAAYGNtYXD1pfc4AAAHcAAAAMRnYXNwABgACQAAV2wAAAAQZ2x5ZljmeNYAAAskAABJ',
   'ZGhlYWQU8AxgAAAAvAAAADZoaGVhDeQG2AAAAPQAAAAkaG10eEtdgsQAAAGYAAAF2GxvY2F8RWpSAAAINAAAAu5tYXhwAYUAmgAA',

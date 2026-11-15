@@ -96,12 +96,14 @@ const Quotes = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [showInvoicesLink, setShowInvoicesLink] = useState(false);
+  const [createdInvoiceId, setCreatedInvoiceId] = useState<number | null>(null);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [busy, setBusy] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [exportingId, setExportingId] = useState<number | null>(null);
 
   // Debounce the search box so we do not query on every keystroke
   useEffect(() => {
@@ -135,10 +137,32 @@ const Quotes = () => {
     loadQuotes();
   }, [loadQuotes]);
 
+  const handleExport = async (quote: QuoteComplete) => {
+    setExportingId(quote.id!);
+    setError(null);
+    setSuccess(null);
+    setWarnings([]);
+    setCreatedInvoiceId(null);
+    try {
+      const response = await window.electron.quote.export(quote.id!);
+      if (!response.success) {
+        setError(response.error || "Échec de l'export du devis.");
+      } else if (response.data && !response.data.canceled) {
+        setSuccess(`Devis ${quote.quote_number} exporté : ${response.data.path}`);
+        setWarnings(response.data.warnings);
+      }
+    } catch (err: any) {
+      setError(`Échec de l'export : ${err.message}`);
+    } finally {
+      setExportingId(null);
+    }
+  };
+
   const handleStatusChange = async (quote: QuoteComplete, status: QuoteStatus) => {
     setError(null);
     setSuccess(null);
-    setShowInvoicesLink(false);
+    setWarnings([]);
+    setCreatedInvoiceId(null);
     try {
       const response = await window.electron.quote.setStatus(quote.id!, status);
       if (response.success) {
@@ -161,7 +185,8 @@ const Quotes = () => {
     setBusy(true);
     setError(null);
     setSuccess(null);
-    setShowInvoicesLink(false);
+    setWarnings([]);
+    setCreatedInvoiceId(null);
 
     try {
       if (pending.type === 'delete') {
@@ -174,7 +199,7 @@ const Quotes = () => {
       } else {
         const response = await window.electron.quote.convertToInvoice(quote.id!);
         if (response.success) {
-          setShowInvoicesLink(true);
+          setCreatedInvoiceId(response.data?.invoice_id ?? null);
           setSuccess(
             `Devis ${quote.quote_number} converti : une facture en brouillon a été créée (son numéro définitif sera attribué à la finalisation)`
           );
@@ -268,11 +293,27 @@ const Quotes = () => {
           className="bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded mb-4 flex justify-between items-center"
         >
           <span>{success}</span>
-          {showInvoicesLink && (
-            <Link to="/invoices" className="text-sm underline hover:no-underline">
-              Voir les factures
+          {createdInvoiceId !== null && (
+            <Link
+              to={`/invoices/${createdInvoiceId}`}
+              className="text-sm underline hover:no-underline"
+            >
+              Voir la facture
             </Link>
           )}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div
+          role="status"
+          className="mb-4 border border-amber-400 bg-amber-50 text-amber-900 px-4 py-3 rounded"
+        >
+          <p className="font-semibold mb-1">À vérifier (l'export a bien été effectué) :</p>
+          <ul className="list-disc pl-5 space-y-1">
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -408,6 +449,15 @@ const Quotes = () => {
                             Convertir en facture
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => handleExport(quote)}
+                          disabled={exportingId !== null}
+                          aria-label={`Exporter le devis ${quote.quote_number} en PDF`}
+                          className="text-gray-700 hover:text-gray-900 disabled:opacity-50"
+                        >
+                          {exportingId === quote.id ? 'Export…' : 'PDF'}
+                        </button>
                         <Link
                           to={`/quotes/${quote.id}`}
                           className="text-blue-600 hover:text-blue-900"

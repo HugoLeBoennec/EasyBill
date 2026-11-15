@@ -18,6 +18,30 @@ export interface EInvoicingSettings {
   offlineMode: boolean;
 }
 
+/** Settings the renderer may hold: never contains a stored secret. */
+export type PublicEInvoicingSettings = Omit<EInvoicingSettings, 'clientId' | 'clientSecret'> & {
+  hasClientId: boolean;
+  hasClientSecret: boolean;
+  /** False when the OS cannot encrypt (e.g. Linux without keyring). */
+  encryptionAvailable: boolean;
+};
+
+/** Payload sent to the main process. Blank/undefined secret = keep current. */
+export type EInvoicingSettingsInput = Omit<EInvoicingSettings, 'clientId' | 'clientSecret'> & {
+  clientId?: string;
+  clientSecret?: string;
+};
+
+export type CredentialsErrorCode = 'encryption-unavailable' | 'io' | 'invalid';
+
+export type CredentialsResult =
+  | { ok: true; settings: PublicEInvoicingSettings }
+  | { ok: false; code: CredentialsErrorCode; message: string };
+
+export const ENCRYPTION_UNAVAILABLE_MESSAGE =
+  "Le chiffrement sécurisé n'est pas disponible sur ce système (trousseau de clés absent). " +
+  'Les identifiants ne peuvent pas être enregistrés.';
+
 export const DEFAULT_SETTINGS: EInvoicingSettings = {
   enabled: false,
   platform: 'chorus-pro',

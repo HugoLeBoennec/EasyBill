@@ -341,18 +341,6 @@ export class FacturXGenerator {
     // Buyer party
     xml += this.buildTradeParty(invoice.accountingCustomerParty, 'BuyerTradeParty', indent + 2);
 
-    // Document references
-    if (invoice.invoiceDocumentReference && invoice.invoiceDocumentReference.length > 0) {
-      invoice.invoiceDocumentReference.forEach((ref) => {
-        xml += `${ind}  <ram:AdditionalReferencedDocument>\n`;
-        xml += `${ind}    <ram:IssuerAssignedID>${this.escapeXml(ref.id)}</ram:IssuerAssignedID>\n`;
-        if (ref.documentTypeCode) {
-          xml += `${ind}    <ram:TypeCode>${ref.documentTypeCode}</ram:TypeCode>\n`;
-        }
-        xml += `${ind}  </ram:AdditionalReferencedDocument>\n`;
-      });
-    }
-
     xml += `${ind}</ram:ApplicableHeaderTradeAgreement>\n`;
     return xml;
   }
@@ -436,9 +424,11 @@ export class FacturXGenerator {
     }
 
     // Payment terms
-    if (invoice.paymentTerms?.note) {
+    if (invoice.paymentTerms?.note || invoice.dueDate) {
       xml += `${ind}  <ram:SpecifiedTradePaymentTerms>\n`;
-      xml += `${ind}    <ram:Description>${this.escapeXml(invoice.paymentTerms.note)}</ram:Description>\n`;
+      if (invoice.paymentTerms?.note) {
+        xml += `${ind}    <ram:Description>${this.escapeXml(invoice.paymentTerms.note)}</ram:Description>\n`;
+      }
       if (invoice.dueDate) {
         xml += `${ind}    <ram:DueDateDateTime>\n`;
         xml += `${ind}      <udt:DateTimeString format="102">${this.formatDate(invoice.dueDate)}</udt:DateTimeString>\n`;
@@ -449,6 +439,18 @@ export class FacturXGenerator {
 
     // Monetary summation (totals)
     xml += this.buildSpecifiedTradeSettlementHeaderMonetarySummation(invoice, indent + 2);
+
+    // BG-3 preceding invoice reference (credit notes, corrections)
+    (invoice.invoiceDocumentReference || []).forEach((ref) => {
+      xml += `${ind}  <ram:InvoiceReferencedDocument>\n`;
+      xml += `${ind}    <ram:IssuerAssignedID>${this.escapeXml(ref.id)}</ram:IssuerAssignedID>\n`;
+      if (ref.issueDate) {
+        xml += `${ind}    <ram:FormattedIssueDateTime>\n`;
+        xml += `${ind}      <udt:DateTimeString format="102">${this.formatDate(ref.issueDate)}</udt:DateTimeString>\n`;
+        xml += `${ind}    </ram:FormattedIssueDateTime>\n`;
+      }
+      xml += `${ind}  </ram:InvoiceReferencedDocument>\n`;
+    });
 
     xml += `${ind}</ram:ApplicableHeaderTradeSettlement>\n`;
     return xml;
@@ -466,13 +468,6 @@ export class FacturXGenerator {
       party.partyIdentification.forEach((id) => {
         const schemeAttr = id.schemeId ? ` schemeID="${id.schemeId}"` : '';
         xml += `${ind}  <ram:ID${schemeAttr}>${this.escapeXml(id.id)}</ram:ID>\n`;
-      });
-    }
-
-    // Global ID (VAT number)
-    if (party.partyTaxScheme && party.partyTaxScheme.length > 0) {
-      party.partyTaxScheme.forEach((pts) => {
-        xml += `${ind}  <ram:GlobalID schemeID="VA">${this.escapeXml(pts.companyId)}</ram:GlobalID>\n`;
       });
     }
 
@@ -521,7 +516,7 @@ export class FacturXGenerator {
     if (party.partyTaxScheme && party.partyTaxScheme.length > 0) {
       party.partyTaxScheme.forEach((pts) => {
         xml += `${ind}  <ram:SpecifiedTaxRegistration>\n`;
-        xml += `${ind}    <ram:ID schemeID="${pts.taxScheme.id}">${this.escapeXml(pts.companyId)}</ram:ID>\n`;
+        xml += `${ind}    <ram:ID schemeID="${pts.taxScheme.id === 'VAT' ? 'VA' : pts.taxScheme.id}">${this.escapeXml(pts.companyId)}</ram:ID>\n`;
         xml += `${ind}  </ram:SpecifiedTaxRegistration>\n`;
       });
     }

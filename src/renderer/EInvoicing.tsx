@@ -7,8 +7,10 @@ import {
   loadSettings,
   saveSettings as persistSettings,
   validateSettings,
+  migrateLegacySettings,
   settingsStore,
-  type EInvoicingSettings,
+  DEFAULT_PUBLIC_SETTINGS,
+  type PublicEInvoicingSettings,
   type Platform,
   type InvoiceFormat,
   type Environment,
@@ -19,17 +21,36 @@ const EInvoicing = () => {
   const t = locale === 'fr' ? fr.eInvoicingPage : en.eInvoicingPage;
 
   // State for settings
-  const [settings, setSettings] = useState<EInvoicingSettings>(() => loadSettings());
+  // Secrets are never sent back by the main process: the inputs below only
+  // hold what the user types; blank means "keep the current value".
+  const [settings, setSettings] = useState<PublicEInvoicingSettings>(DEFAULT_PUBLIC_SETTINGS);
+  const [clientIdInput, setClientIdInput] = useState('');
+  const [clientSecretInput, setClientSecretInput] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Load settings on mount (only once)
+  // Migrate legacy clear-text settings (once), then load masked settings
   useEffect(() => {
-    const loaded = loadSettings();
-    setSettings(loaded);
+    let cancelled = false;
+    (async () => {
+      let migrationError: string | null = null;
+      try {
+        const migration = await migrateLegacySettings();
+        if (migration && !migration.ok) migrationError = migration.message;
+      } catch {
+        migrationError = "La migration des anciens identifiants a échoué.";
+      }
+      const loaded = await loadSettings();
+      if (cancelled) return;
+      setSettings(loaded);
+      if (migrationError) setValidationErrors([migrationError]);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Auto-populate API endpoint when platform or environment changes
@@ -56,13 +77,15 @@ const EInvoicing = () => {
     }, 2000);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Clear previous errors and success message
     setValidationErrors([]);
     setSaveSuccess(false);
 
     // Validate settings
-    const validation = validateSettings(settings);
+    const { hasClientId, hasClientSecret, encryptionAvailable: _enc, ...rest } = settings;
+    const input = { ...rest, clientId: clientIdInput, clientSecret: clientSecretInput };
+    const validation = validateSettings(input, { hasClientId, hasClientSecret });
 
     if (!validation.valid) {
       setValidationErrors(validation.errors);
@@ -70,19 +93,20 @@ const EInvoicing = () => {
     }
 
     // Save settings
-    try {
-      persistSettings(settings);
-      setSaveSuccess(true);
-
-      // Hide success message after 3 seconds
-      setTimeout(() => {
-        setSaveSuccess(false);
-      }, 3000);
-    } catch (error) {
-      setValidationErrors([
-        error instanceof Error ? error.message : 'Failed to save settings',
-      ]);
+    const result = await persistSettings(input);
+    if (!result.ok) {
+      setValidationErrors([result.message]);
+      return;
     }
+    setSettings(result.settings);
+    setClientIdInput('');
+    setClientSecretInput('');
+    setSaveSuccess(true);
+
+    // Hide success message after 3 seconds
+    setTimeout(() => {
+      setSaveSuccess(false);
+    }, 3000);
   };
 
   const handlePlatformChange = (platform: Platform) => {
@@ -162,7 +186,7 @@ const EInvoicing = () => {
             </div>
             <div className="ml-3">
               <h3 className="text-sm font-medium text-red-800">
-                Validation Errors
+                Erreurs de validation
               </h3>
               <div className="mt-2 text-sm text-red-700">
                 <ul className="list-disc pl-5 space-y-1">
@@ -350,14 +374,12 @@ const EInvoicing = () => {
                   id="client-id"
                   type="text"
                   placeholder="your-client-id"
-                  value={settings.clientId || ''}
-                  onChange={(e) =>
-                    setSettings({ ...settings, clientId: e.target.value })
-                  }
+                  value={clientIdInput}
+                  onChange={(e) => setClientIdInput(e.target.value)}
                 />
-                {settings.clientId && (
+                {settings.hasClientId && !clientIdInput && (
                   <p className="mt-1 text-xs text-green-600">
-                    ✓ Client ID entered ({settings.clientId.length} characters)
+                    ✓ Identifiant client enregistré (laisser vide pour le conserver)
                   </p>
                 )}
               </div>
@@ -372,10 +394,8 @@ const EInvoicing = () => {
                     id="client-secret"
                     type={showPassword ? 'text' : 'password'}
                     placeholder="••••••••••••••••"
-                    value={settings.clientSecret || ''}
-                    onChange={(e) =>
-                      setSettings({ ...settings, clientSecret: e.target.value })
-                    }
+                    value={clientSecretInput}
+                    onChange={(e) => setClientSecretInput(e.target.value)}
                   />
                   <button
                     type="button"
@@ -385,9 +405,15 @@ const EInvoicing = () => {
                     {showPassword ? '🔓' : '🔒'}
                   </button>
                 </div>
-                {settings.clientSecret && (
+                {settings.hasClientSecret && !clientSecretInput && (
                   <p className="mt-1 text-xs text-green-600">
-                    ✓ Client secret entered ({settings.clientSecret.length} characters)
+                    ✓ Secret client enregistré de façon chiffrée (laisser vide pour le conserver)
+                  </p>
+                )}
+                {!settings.encryptionAvailable && (
+                  <p className="mt-1 text-xs text-red-600">
+                    Le chiffrement sécurisé n&apos;est pas disponible sur ce système : les
+                    identifiants ne peuvent pas être enregistrés.
                   </p>
                 )}
               </div>

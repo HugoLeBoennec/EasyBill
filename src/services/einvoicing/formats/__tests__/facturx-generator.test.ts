@@ -250,7 +250,9 @@ describe('FacturXGenerator', () => {
       expect(xml).toContain('<ram:ApplicableHeaderTradeAgreement>');
       expect(xml).toContain('<ram:SellerTradeParty>');
       expect(xml).toContain('<ram:Name>TechCorp France SARL</ram:Name>');
-      expect(xml).toContain('<ram:GlobalID schemeID="VA">FR85252754800</ram:GlobalID>');
+      expect(xml).toContain('<ram:ID schemeID="VA">FR85252754800</ram:ID>');
+      expect(xml).not.toContain('schemeID="VAT"');
+      expect(xml).not.toContain('<ram:GlobalID schemeID="VA">');
       expect(xml).toContain('25 Boulevard Haussmann');
       expect(xml).toContain('75009');
       expect(xml).toContain('Paris');
@@ -453,8 +455,18 @@ describe('FacturXGenerator', () => {
       const xml = facturXGenerator.generate(invoice);
 
       expect(xml).toContain('<ram:TypeCode>381</ram:TypeCode>');
-      expect(xml).toContain('<ram:AdditionalReferencedDocument>');
-      expect(xml).toContain('FX-2024-999');
+      expect(xml).toContain('<ram:InvoiceReferencedDocument>');
+      expect(xml).toContain('<ram:IssuerAssignedID>FX-2024-999</ram:IssuerAssignedID>');
+    });
+
+    it('should write the due date even without payment terms note', () => {
+      const invoice = createSampleInvoice();
+      invoice.paymentTerms = undefined;
+      invoice.dueDate = '2025-03-01';
+      const xml = facturXGenerator.generate(invoice);
+      expect(xml).toContain('<ram:SpecifiedTradePaymentTerms>');
+      expect(xml).toContain('<udt:DateTimeString format="102">20250301</udt:DateTimeString>');
+      expect(xml).not.toContain('<ram:Description></ram:Description>');
     });
 
     it('should format amounts with 2 decimal places', () => {

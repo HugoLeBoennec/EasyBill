@@ -26,6 +26,12 @@ export interface Invoice {
   seller_id?: number;
   buyer_id?: number;
 
+  // Credit notes (migration 004)
+  /** Credit note only: id of the invoice it corrects */
+  credited_invoice_id?: number | null;
+  /** Invoice only: total (TTC, cents) of the credit notes issued against it */
+  credited_amount?: number;
+
   // Status
   status: InvoiceStatus;
   payment_status?: PaymentStatus;
@@ -119,6 +125,29 @@ export interface Party {
   // Electronic
   electronic_address?: string;
   electronic_address_scheme?: string;
+
+  // Seller legal mentions (migration 003, meaningful for the company party)
+  /** Share capital in euros (companies only) */
+  share_capital?: number | null;
+  /** Register the seller is listed in: commerce (RCS) or artisans (RM) */
+  registration_type?: 'RCS' | 'RM' | null;
+  /** City of the registry; the registration number itself is the SIREN */
+  registration_city?: string | null;
+  /** APE / NAF code, e.g. "6201Z" */
+  ape_code?: string | null;
+  /** 1 = VAT franchise (art. 293 B du CGI): invoices are issued without VAT */
+  vat_franchise?: number;
+
+  // Bank details
+  iban?: string | null;
+  bic?: string | null;
+
+  // Default payment conditions printed on invoices
+  default_payment_terms_days?: number | null;
+  late_penalty_text?: string | null;
+  /** 1 = print the 40 EUR fixed recovery fee mention (default) */
+  recovery_fee_enabled?: number;
+  early_payment_discount_text?: string | null;
 
   // Status
   active: number;
@@ -356,6 +385,8 @@ export interface InvoiceComplete extends Invoice {
   einvoice_status?: string;
   pa_platform?: string;
   balance_due?: number;
+  /** Credit note only: number of the invoice it corrects */
+  credited_invoice_number?: string | null;
 }
 
 export interface EInvoicePending {
@@ -557,6 +588,7 @@ export type AuditAction = 'create' | 'read' | 'update' | 'delete' | 'send' | 're
 
 export interface InvoiceFilter {
   status?: InvoiceStatus;
+  invoice_type?: InvoiceType;
   payment_status?: PaymentStatus;
   seller_id?: number;
   buyer_id?: number;
@@ -612,6 +644,8 @@ export interface DatabaseStats {
   finalized_invoices: number;
   sent_invoices: number; // New
   signed_invoices: number; // New
+  /** Issued credit notes (invoice counters above exclude credit notes) */
+  total_credit_notes?: number;
   total_quotes: number; // New
   total_parties: number;
   total_customers: number;
@@ -625,6 +659,12 @@ export interface DashboardFinancialMetrics {
   overdue_amount: number; // In cents
   overdue_count: number;
   payment_terms_days: number; // Default payment terms
+  /** Issued invoices, TTC cents (credit notes not deducted) */
+  invoiced_amount?: number;
+  /** Issued credit notes, TTC cents */
+  credit_notes_amount?: number;
+  /** invoiced_amount - credit_notes_amount */
+  net_revenue?: number;
 }
 
 // Helper type for partial updates

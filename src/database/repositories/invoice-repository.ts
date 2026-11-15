@@ -109,6 +109,52 @@ export function computeInvoiceTotals(
   return { subtotal_amount, tax_amount, total_amount: subtotal_amount + tax_amount, vat_breakdown };
 }
 
+/** Prefix of the credit note sequence (AV-<year>-<sequence>), separate from invoices. */
+export const CREDIT_NOTE_PREFIX = 'AV';
+
+/** Accepted payment methods (stored in invoice_payments.payment_method). */
+export const PAYMENT_METHODS = ['transfer', 'card', 'check', 'cash', 'direct_debit', 'other'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/** A payment as entered by the user. */
+export interface PaymentInput {
+  payment_date: string; // YYYY-MM-DD
+  /** Amount received, in cents */
+  amount: number;
+  payment_method: string;
+  payment_reference?: string | null;
+  notes?: string | null;
+}
+
+type InvoiceAmounts = Pick<Invoice, 'invoice_type' | 'total_amount' | 'paid_amount' | 'credited_amount'>;
+
+/** Amount of an invoice that can still be credited by a credit note (cents). */
+export function creditableAmount(invoice: InvoiceAmounts): number {
+  if (invoice.invoice_type === 'credit_note') return 0;
+  return Math.max(0, invoice.total_amount - (invoice.credited_amount || 0));
+}
+
+/**
+ * Balance still due by the customer (cents): total - credit notes - payments.
+ * A credit note is never "due"; a draft has no balance yet (callers decide).
+ */
+export function balanceDue(invoice: InvoiceAmounts): number {
+  if (invoice.invoice_type === 'credit_note') return 0;
+  return Math.max(
+    0,
+    invoice.total_amount - (invoice.credited_amount || 0) - (invoice.paid_amount || 0)
+  );
+}
+
+/** Amount received in excess of what is due after credit notes (to refund), in cents. */
+export function overpaidAmount(invoice: InvoiceAmounts): number {
+  if (invoice.invoice_type === 'credit_note') return 0;
+  return Math.max(
+    0,
+    (invoice.paid_amount || 0) - Math.max(0, invoice.total_amount - (invoice.credited_amount || 0))
+  );
+}
+
 /** Header of a draft as edited in the form. */
 export interface InvoiceDraftInput {
   invoice_date: string; // YYYY-MM-DD
@@ -158,6 +204,24 @@ const LOCKED_AFTER_ISSUE = new Set([
   'payment_terms_days',
 ]);
 
+/** Maintained by the repository only (credit notes), never through update(). */
+const INTERNAL_FIELDS = new Set(['credited_invoice_id', 'credited_amount']);
+
+const frDate = (iso: string): string => iso.slice(0, 10).split('-').reverse().join('/');
+
+const frAmount = (cents: number): string =>
+  `${(cents / 100).toFixed(2).replace('.', ',')} €`;
+
+const localToday = (): string => {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+};
+
+/** SQL: balance still due on an invoice row (see balanceDue). */
+const BALANCE_SQL =
+  '(total_amount - COALESCE(credited_amount, 0) - COALESCE(paid_amount, 0))';
+
 const ISSUED_INVOICE_ERROR =
   'Une facture émise ne peut plus être modifiée ni supprimée. Pour la corriger, émettez une facture d\'avoir.';
 
@@ -186,6 +250,7 @@ export class InvoiceRepository {
         field !== 'id' &&
         field !== 'created_at' &&
         field !== 'updated_at' &&
+        !INTERNAL_FIELDS.has(field) &&
         (updates as Record<string, unknown>)[field] !== undefined
     );
   }
@@ -213,6 +278,7 @@ export class InvoiceRepository {
    */
   create(invoice: NewRecord<Invoice>): number {
     const hasPaymentTerms = this.columnsOf('invoices').has('payment_terms_days');
+    const hasCreditLink = this.columnsOf('invoices').has('credited_invoice_id');
     const stmt = this.db.prepare(`
       INSERT INTO invoices (
         invoice_number, invoice_date, due_date, invoice_type,
@@ -220,12 +286,14 @@ export class InvoiceRepository {
         seller_id, buyer_id, status, payment_status,
         notes, buyer_reference, purchase_order_ref
         ${hasPaymentTerms ? ', payment_terms_days' : ''}
+        ${hasCreditLink ? ', credited_invoice_id' : ''}
       ) VALUES (
         @invoice_number, @invoice_date, @due_date, @invoice_type,
         @subtotal_amount, @tax_amount, @total_amount, @paid_amount, @currency,
         @seller_id, @buyer_id, @status, @payment_status,
         @notes, @buyer_reference, @purchase_order_ref
         ${hasPaymentTerms ? ', @payment_terms_days' : ''}
+        ${hasCreditLink ? ', @credited_invoice_id' : ''}
       )
     `);
 
@@ -250,6 +318,7 @@ export class InvoiceRepository {
       buyer_reference: invoice.buyer_reference ?? null,
       purchase_order_ref: invoice.purchase_order_ref ?? null,
       payment_terms_days: invoice.payment_terms_days ?? 30,
+      credited_invoice_id: invoice.credited_invoice_id ?? null,
     };
 
     const insert = this.db.transaction(() => {
@@ -293,6 +362,10 @@ export class InvoiceRepository {
       if (filter.status) {
         sql += ' AND status = ?';
         params.push(filter.status);
+      }
+      if (filter.invoice_type) {
+        sql += ' AND invoice_type = ?';
+        params.push(filter.invoice_type);
       }
       if (filter.payment_status) {
         sql += ' AND payment_status = ?';
@@ -368,6 +441,11 @@ export class InvoiceRepository {
         throw new Error(ISSUED_INVOICE_ERROR);
       }
     } else {
+      if (fields.includes('invoice_type') && values.invoice_type !== current.invoice_type) {
+        throw new Error(
+          "Le type d'un document ne peut pas être modifié : un avoir se crée à partir de la facture d'origine."
+        );
+      }
       if (fields.includes('invoice_number') && values.invoice_number !== current.invoice_number) {
         throw new Error(
           'Le numéro de facture est attribué automatiquement lors de la finalisation.'
@@ -420,6 +498,10 @@ export class InvoiceRepository {
       if (filter.status) {
         sql += ' AND status = ?';
         params.push(filter.status);
+      }
+      if (filter.invoice_type) {
+        sql += ' AND invoice_type = ?';
+        params.push(filter.invoice_type);
       }
       if (filter.payment_status) {
         sql += ' AND payment_status = ?';
@@ -573,6 +655,29 @@ export class InvoiceRepository {
     if (!header || !ISO_DATE.test(header.invoice_date || '')) {
       throw new Error('La date de facture est obligatoire.');
     }
+
+    // A credit note keeps its type, its link and the customer of the original invoice
+    const current = id === null || id === undefined ? undefined : this.findById(id);
+    const isCreditNote = current?.invoice_type === 'credit_note';
+    if (!isCreditNote && header.invoice_type === 'credit_note') {
+      throw new Error("Un avoir se crée à partir de la facture d'origine (« Créer un avoir »).");
+    }
+    let original: Invoice | undefined;
+    if (isCreditNote) {
+      original = current?.credited_invoice_id
+        ? this.findById(current.credited_invoice_id)
+        : undefined;
+      if (!original) {
+        throw new Error("La facture d'origine de cet avoir est introuvable.");
+      }
+      if (header.invoice_date < original.invoice_date.slice(0, 10)) {
+        throw new Error(
+          `La date de l'avoir ne peut pas précéder celle de la facture d'origine (${frDate(original.invoice_date)}).`
+        );
+      }
+      header = { ...header, buyer_id: original.buyer_id as number, due_date: null };
+    }
+
     if (header.due_date && !ISO_DATE.test(header.due_date)) {
       throw new Error("La date d'échéance est invalide.");
     }
@@ -623,6 +728,15 @@ export class InvoiceRepository {
     });
     const totals = computeInvoiceTotals(computedLines);
 
+    if (original) {
+      const limit = creditableAmount(original);
+      if (totals.total_amount > limit) {
+        throw new Error(
+          `Le montant de l'avoir (${frAmount(totals.total_amount)}) dépasse le montant restant à créditer sur la facture ${original.invoice_number} (${frAmount(limit)}). Réduisez les quantités ou supprimez des lignes.`
+        );
+      }
+    }
+
     const save = this.db.transaction(() => {
       let sellerId = header.seller_id ?? null;
       if (!sellerId) {
@@ -635,7 +749,7 @@ export class InvoiceRepository {
       const headerValues: UpdateRecord<Invoice> = {
         invoice_date: header.invoice_date,
         due_date: header.due_date || undefined,
-        invoice_type: header.invoice_type || 'invoice',
+        invoice_type: isCreditNote ? 'credit_note' : header.invoice_type || 'invoice',
         subtotal_amount: totals.subtotal_amount,
         tax_amount: totals.tax_amount,
         total_amount: totals.total_amount,
@@ -728,31 +842,72 @@ export class InvoiceRepository {
     const run = this.db.transaction(() => {
       const invoice = this.findById(id);
       if (!invoice || invoice.status !== 'draft') return false;
+      const isCreditNote = invoice.invoice_type === 'credit_note';
+      const doc = isCreditNote ? "l'avoir" : 'la facture';
 
       if (!ISO_DATE.test(invoice.invoice_date || '')) {
-        throw new Error('La date de facture est obligatoire pour finaliser la facture.');
+        throw new Error(`La date est obligatoire pour finaliser ${doc}.`);
       }
       if (!invoice.buyer_id) {
-        throw new Error('Un client doit être sélectionné pour finaliser la facture.');
+        throw new Error(`Un client doit être sélectionné pour finaliser ${doc}.`);
       }
       const lines = this.findLinesByInvoiceId(id);
       if (lines.length === 0) {
-        throw new Error('Impossible de finaliser une facture sans ligne.');
+        throw new Error(
+          isCreditNote
+            ? 'Impossible de finaliser un avoir sans ligne.'
+            : 'Impossible de finaliser une facture sans ligne.'
+        );
       }
 
+      // Credit note: checked against the original invoice inside the transaction
+      let original: Invoice | undefined;
+      const creditTotals = computeInvoiceTotals(lines);
+      if (isCreditNote) {
+        original = invoice.credited_invoice_id
+          ? this.findById(invoice.credited_invoice_id)
+          : undefined;
+        if (!original || original.status === 'draft' || original.invoice_type === 'credit_note') {
+          throw new Error("Un avoir doit être rattaché à une facture émise.");
+        }
+        if (invoice.invoice_date < original.invoice_date.slice(0, 10)) {
+          throw new Error(
+            `La date de l'avoir ne peut pas précéder celle de la facture d'origine (${frDate(original.invoice_date)}).`
+          );
+        }
+        if (creditTotals.total_amount <= 0) {
+          throw new Error("Le montant de l'avoir doit être supérieur à zéro.");
+        }
+        const limit = creditableAmount(original);
+        if (creditTotals.total_amount > limit) {
+          throw new Error(
+            `Le montant de l'avoir (${frAmount(creditTotals.total_amount)}) dépasse le montant restant à créditer sur la facture ${original.invoice_number} (${frAmount(limit)}).`
+          );
+        }
+      }
+
+      // Invoices and credit notes each have their own chronological sequence
       const last = this.db
-        .prepare("SELECT MAX(invoice_date) AS last_date FROM invoices WHERE status != 'draft'")
-        .get() as { last_date: string | null };
+        .prepare(
+          `SELECT MAX(invoice_date) AS last_date FROM invoices
+           WHERE status != 'draft' AND (invoice_type = 'credit_note') = ?`
+        )
+        .get(isCreditNote ? 1 : 0) as { last_date: string | null };
       if (last.last_date && invoice.invoice_date < last.last_date.slice(0, 10)) {
-        const fr = (iso: string) => iso.slice(0, 10).split('-').reverse().join('/');
         throw new Error(
-          `La date de la facture (${fr(invoice.invoice_date)}) est antérieure à celle de la dernière facture émise (${fr(last.last_date)}). ` +
-            'La numérotation doit rester chronologique : modifiez la date de la facture avant de la finaliser.'
+          isCreditNote
+            ? `La date de l'avoir (${frDate(invoice.invoice_date)}) est antérieure à celle du dernier avoir émis (${frDate(last.last_date)}). ` +
+                "La numérotation doit rester chronologique : modifiez la date de l'avoir avant de le finaliser."
+            : `La date de la facture (${frDate(invoice.invoice_date)}) est antérieure à celle de la dernière facture émise (${frDate(last.last_date)}). ` +
+                'La numérotation doit rester chronologique : modifiez la date de la facture avant de la finaliser.'
         );
       }
 
       const year = Number(invoice.invoice_date.slice(0, 4));
-      const invoiceNumber = this.getNextInvoiceNumber(prefix, year);
+      const invoiceNumber = this.getNextInvoiceNumber(
+        isCreditNote ? CREDIT_NOTE_PREFIX : prefix,
+        year
+      );
 
       // A legacy draft may still hold this number: give it a provisional one
       this.db
@@ -777,9 +932,161 @@ export class InvoiceRepository {
            WHERE id = ? AND status = 'draft'`
         )
         .run(invoiceNumber, totals.subtotal_amount, totals.tax_amount, totals.total_amount, id);
+
+      if (original && result.changes > 0) {
+        // The original invoice itself is untouched (immutable): only its
+        // credited total and its settlement state evolve.
+        this.db
+          .prepare(
+            'UPDATE invoices SET credited_amount = COALESCE(credited_amount, 0) + ? WHERE id = ?'
+          )
+          .run(totals.total_amount, original.id);
+        this.refreshSettlement(original.id as number);
+      }
       return result.changes > 0;
     });
     return run.immediate();
+  }
+
+  // ========================================================================
+  // CREDIT NOTES (AVOIRS)
+  // ========================================================================
+
+  /**
+   * Create a draft credit note for an issued invoice.
+   *
+   * The draft copies the lines of the original (full cancellation, or what
+   * is left to credit is checked when saving / finalizing); the user may
+   * reduce quantities or remove lines for a partial credit. Amounts are
+   * stored positive, the type (credit_note) carries the sign.
+   * If a draft credit note already exists for this invoice, its id is
+   * returned instead of creating a second one.
+   */
+  createCreditNote(originalId: number): number {
+    const run = this.db.transaction(() => {
+      const original = this.findById(originalId);
+      if (!original) {
+        throw new Error('Facture introuvable.');
+      }
+      if (original.invoice_type === 'credit_note') {
+        throw new Error("Un avoir ne peut pas faire l'objet d'un avoir.");
+      }
+      if (original.status === 'draft') {
+        throw new Error(
+          "Un brouillon n'a pas besoin d'avoir : modifiez-le ou supprimez-le directement."
+        );
+      }
+      if (creditableAmount(original) <= 0) {
+        throw new Error(
+          `La facture ${original.invoice_number} a déjà été intégralement créditée par avoir.`
+        );
+      }
+
+      const pending = this.db
+        .prepare(
+          "SELECT id FROM invoices WHERE credited_invoice_id = ? AND invoice_type = 'credit_note' AND status = 'draft' ORDER BY id LIMIT 1"
+        )
+        .get(originalId) as { id: number } | undefined;
+      if (pending) return pending.id;
+
+      const today = localToday();
+      const originalDate = original.invoice_date.slice(0, 10);
+      const lines = this.findLinesByInvoiceId(originalId);
+      const totals = computeInvoiceTotals(lines);
+
+      const creditNoteId = this.create({
+        invoice_number: '',
+        invoice_date: today < originalDate ? originalDate : today,
+        invoice_type: 'credit_note',
+        subtotal_amount: totals.subtotal_amount,
+        tax_amount: totals.tax_amount,
+        total_amount: totals.total_amount,
+        paid_amount: 0,
+        currency: original.currency,
+        seller_id: original.seller_id,
+        buyer_id: original.buyer_id,
+        status: 'draft',
+        payment_status: 'unpaid',
+        payment_terms_days: 0,
+        notes: `Avoir sur la facture ${original.invoice_number} du ${frDate(originalDate)}`,
+        buyer_reference: original.buyer_reference,
+        purchase_order_ref: original.purchase_order_ref,
+        credited_invoice_id: originalId,
+      });
+
+      lines.forEach((line, index) => {
+        this.createLine({
+          invoice_id: creditNoteId,
+          line_number: index + 1,
+          item_name: line.item_name,
+          item_description: line.item_description,
+          item_code: line.item_code,
+          item_gtin: line.item_gtin,
+          quantity: line.quantity,
+          unit_code: line.unit_code,
+          unit_price: line.unit_price,
+          line_amount: line.line_amount,
+          discount_amount: line.discount_amount,
+          line_total: line.line_total,
+          vat_category: line.vat_category,
+          vat_rate: line.vat_rate,
+          vat_amount: line.vat_amount,
+          period_start: line.period_start,
+          period_end: line.period_end,
+        });
+      });
+      return creditNoteId;
+    });
+    return run();
+  }
+
+  /**
+   * Credit notes attached to an invoice (drafts included), oldest first
+   */
+  findCreditNotes(invoiceId: number): Invoice[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM invoices WHERE credited_invoice_id = ? AND invoice_type = 'credit_note' ORDER BY (status = 'draft'), invoice_date, id"
+      )
+      .all(invoiceId) as Invoice[];
+  }
+
+  /**
+   * Recompute the settlement state of an issued invoice from its total, the
+   * credit notes issued against it and the payments received:
+   * - fully credited            -> status 'cancelled' (annulée par avoir)
+   * - balance reaches zero      -> status 'paid', payment_status 'paid'
+   * - something paid, not all   -> payment_status 'partial'
+   * - nothing paid              -> payment_status 'unpaid'
+   * A 'paid' / 'cancelled' invoice with a balance again (payment deleted)
+   * goes back to 'sent' or 'finalized'.
+   */
+  private refreshSettlement(id: number): void {
+    const invoice = this.findById(id);
+    if (!invoice || invoice.status === 'draft' || invoice.invoice_type === 'credit_note') return;
+
+    const credited = invoice.credited_amount || 0;
+    const net = Math.max(0, invoice.total_amount - credited);
+    const paid = invoice.paid_amount || 0;
+
+    let status: Invoice['status'] = invoice.status;
+    let paymentStatus: NonNullable<Invoice['payment_status']>;
+    if (credited > 0 && net === 0) {
+      status = 'cancelled';
+      paymentStatus = paid > 0 ? 'paid' : 'unpaid';
+    } else if (paid >= net) {
+      status = 'paid';
+      paymentStatus = 'paid';
+    } else {
+      paymentStatus = paid > 0 ? 'partial' : 'unpaid';
+      if (status === 'paid' || status === 'cancelled') {
+        status = invoice.sent_at ? 'sent' : 'finalized';
+      }
+    }
+
+    this.db
+      .prepare('UPDATE invoices SET status = ?, payment_status = ? WHERE id = ?')
+      .run(status, paymentStatus, id);
   }
 
   /**
@@ -796,6 +1103,109 @@ export class InvoiceRepository {
     return result.changes > 0;
   }
 
+  // ========================================================================
+  // PAYMENTS
+  // ========================================================================
+
+  /** An invoice that can receive a payment, or a French error. */
+  private assertPayable(id: number): Invoice {
+    const invoice = this.findById(id);
+    if (!invoice) {
+      throw new Error('Facture introuvable.');
+    }
+    if (invoice.invoice_type === 'credit_note') {
+      throw new Error("Un avoir ne s'encaisse pas : aucun paiement ne peut y être enregistré.");
+    }
+    if (invoice.status === 'draft') {
+      throw new Error('Finalisez la facture avant d\'enregistrer un paiement.');
+    }
+    if (invoice.status === 'cancelled') {
+      throw new Error('Cette facture a été annulée par avoir : plus rien n\'est dû.');
+    }
+    return invoice;
+  }
+
+  /**
+   * Record a payment (partial payments allowed).
+   *
+   * The invoice becomes 'paid' when its balance (total - credit notes -
+   * payments) reaches zero, otherwise its payment status is 'partial'.
+   * Returns the id of the payment.
+   */
+  recordPayment(invoiceId: number, payment: PaymentInput): number {
+    const amount = Number(payment?.amount);
+    const method = (payment?.payment_method || '').trim();
+    if (!payment || !ISO_DATE.test(payment.payment_date || '')) {
+      throw new Error('La date de paiement est invalide.');
+    }
+    if (payment.payment_date > localToday()) {
+      throw new Error('La date de paiement ne peut pas être dans le futur.');
+    }
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new Error('Le montant du paiement doit être supérieur à zéro.');
+    }
+    if (!(PAYMENT_METHODS as readonly string[]).includes(method)) {
+      throw new Error('Le mode de paiement est invalide.');
+    }
+
+    const run = this.db.transaction(() => {
+      const invoice = this.assertPayable(invoiceId);
+      const remaining = balanceDue(invoice);
+      if (remaining <= 0) {
+        throw new Error('Cette facture est déjà soldée.');
+      }
+      if (amount > remaining) {
+        throw new Error(
+          `Le montant (${frAmount(amount)}) dépasse le solde restant dû (${frAmount(remaining)}).`
+        );
+      }
+
+      const result = this.db
+        .prepare(
+          `INSERT INTO invoice_payments (invoice_id, payment_date, amount, payment_method, payment_reference, notes)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          invoiceId,
+          payment.payment_date,
+          amount,
+          method,
+          (payment.payment_reference || '').trim() || null,
+          (payment.notes || '').trim() || null
+        );
+      this.db
+        .prepare('UPDATE invoices SET paid_amount = COALESCE(paid_amount, 0) + ? WHERE id = ?')
+        .run(amount, invoiceId);
+      this.refreshSettlement(invoiceId);
+      return result.lastInsertRowid as number;
+    });
+    return run();
+  }
+
+  /**
+   * Delete a payment recorded by mistake; the invoice goes back to
+   * 'partial' / 'unpaid' (and from 'paid' to 'sent' or 'finalized').
+   * Returns false when the payment does not exist.
+   */
+  deletePayment(paymentId: number): boolean {
+    const run = this.db.transaction(() => {
+      const payment = this.db
+        .prepare('SELECT * FROM invoice_payments WHERE id = ?')
+        .get(paymentId) as InvoicePayment | undefined;
+      if (!payment) return false;
+
+      this.db.prepare('DELETE FROM invoice_payments WHERE id = ?').run(paymentId);
+      this.db
+        .prepare(
+          'UPDATE invoices SET paid_amount = MAX(COALESCE(paid_amount, 0) - ?, 0) WHERE id = ?'
+        )
+        .run(payment.amount, payment.invoice_id);
+      this.refreshSettlement(payment.invoice_id);
+      return true;
+    });
+    return run();
+  }
+
   /**
    * Mark invoice as paid
    *
@@ -809,10 +1219,10 @@ export class InvoiceRepository {
     }
     const run = this.db.transaction(() => {
       const invoice = this.findById(id);
-      if (!invoice) return false;
+      if (!invoice || invoice.invoice_type === 'credit_note') return false;
       if (invoice.status !== 'finalized' && invoice.status !== 'sent') return false;
 
-      const remaining = invoice.total_amount - (invoice.paid_amount || 0);
+      const remaining = balanceDue(invoice);
       if (remaining > 0) {
         this.db
           .prepare(
@@ -820,16 +1230,13 @@ export class InvoiceRepository {
              VALUES (?, COALESCE(?, date('now', 'localtime')), ?, ?)`
           )
           .run(id, paymentDate ?? null, remaining, paymentMethod);
+        this.db
+          .prepare('UPDATE invoices SET paid_amount = COALESCE(paid_amount, 0) + ? WHERE id = ?')
+          .run(remaining, id);
       }
 
       const result = this.db
-        .prepare(
-          `UPDATE invoices
-           SET payment_status = 'paid',
-               status = 'paid',
-               paid_amount = total_amount
-           WHERE id = ?`
-        )
+        .prepare("UPDATE invoices SET payment_status = 'paid', status = 'paid' WHERE id = ?")
         .run(id);
       return result.changes > 0;
     });
@@ -854,9 +1261,10 @@ export class InvoiceRepository {
     if (!invoice) return false;
 
     const newPaidAmount = (invoice.paid_amount || 0) + amount;
+    const net = invoice.total_amount - (invoice.credited_amount || 0);
     let paymentStatus: string;
 
-    if (newPaidAmount >= invoice.total_amount) {
+    if (newPaidAmount >= net) {
       paymentStatus = 'paid';
     } else if (newPaidAmount > 0) {
       paymentStatus = 'partial';
@@ -881,8 +1289,10 @@ export class InvoiceRepository {
     const stmt = this.db.prepare(`
       SELECT * FROM invoices
       WHERE due_date < date('now')
+        AND invoice_type != 'credit_note'
         AND payment_status != 'paid'
         AND status NOT IN ('draft', 'cancelled')
+        AND ${BALANCE_SQL} > 0
       ORDER BY due_date
     `);
     return stmt.all() as Invoice[];
@@ -911,13 +1321,19 @@ export class InvoiceRepository {
   }
 
   /**
-   * Calculate total revenue for period
+   * Calculate total revenue for period (TTC, cents), net of credit notes.
+   *
+   * Every ISSUED document counts, at its own date: invoices (finalized,
+   * sent, paid, or later cancelled by a credit note) add their total,
+   * credit notes subtract theirs. Drafts never count.
    */
   getTotalRevenue(fromDate?: string, toDate?: string): number {
     let sql = `
-      SELECT COALESCE(SUM(total_amount), 0) as total
+      SELECT COALESCE(SUM(
+        CASE WHEN invoice_type = 'credit_note' THEN -total_amount ELSE total_amount END
+      ), 0) as total
       FROM invoices
-      WHERE status IN ('sent', 'paid')
+      WHERE status != 'draft'
     `;
     const params: string[] = [];
 
@@ -974,6 +1390,7 @@ export class InvoiceRepository {
       SELECT COUNT(*) as count
       FROM invoices
       WHERE status = 'sent'
+        AND invoice_type != 'credit_note'
     `);
     const result = stmt.get() as { count: number };
     return result.count;
@@ -987,6 +1404,7 @@ export class InvoiceRepository {
       SELECT COUNT(*) as count
       FROM invoices
       WHERE is_signed = 1
+        AND invoice_type != 'credit_note'
     `);
     const result = stmt.get() as { count: number };
     return result.count;
@@ -1002,15 +1420,20 @@ export class InvoiceRepository {
     overdue_amount: number;
     overdue_count: number;
     payment_terms_days: number;
+    invoiced_amount: number;
+    credit_notes_amount: number;
+    net_revenue: number;
   } {
     // Calculate awaiting payment (sent but not paid, not yet overdue)
     const awaitingStmt = this.db.prepare(`
       SELECT
-        COALESCE(SUM(total_amount - COALESCE(paid_amount, 0)), 0) as amount,
+        COALESCE(SUM(${BALANCE_SQL}), 0) as amount,
         COUNT(*) as count
       FROM invoices
       WHERE status = 'sent'
+        AND invoice_type != 'credit_note'
         AND payment_status != 'paid'
+        AND ${BALANCE_SQL} > 0
         AND date(invoice_date, '+' || COALESCE(payment_terms_days, ?) || ' days') >= date('now')
     `);
     const awaitingResult = awaitingStmt.get(paymentTermsDays) as {
@@ -1021,11 +1444,13 @@ export class InvoiceRepository {
     // Calculate overdue (past payment terms date)
     const overdueStmt = this.db.prepare(`
       SELECT
-        COALESCE(SUM(total_amount - COALESCE(paid_amount, 0)), 0) as amount,
+        COALESCE(SUM(${BALANCE_SQL}), 0) as amount,
         COUNT(*) as count
       FROM invoices
       WHERE status = 'sent'
+        AND invoice_type != 'credit_note'
         AND payment_status != 'paid'
+        AND ${BALANCE_SQL} > 0
         AND date(invoice_date, '+' || COALESCE(payment_terms_days, ?) || ' days') < date('now')
     `);
     const overdueResult = overdueStmt.get(paymentTermsDays) as {
@@ -1033,7 +1458,21 @@ export class InvoiceRepository {
       count: number;
     };
 
+    // Revenue: issued invoices minus issued credit notes
+    const revenue = this.db
+      .prepare(
+        `SELECT
+           COALESCE(SUM(CASE WHEN invoice_type != 'credit_note' THEN total_amount ELSE 0 END), 0) as invoiced,
+           COALESCE(SUM(CASE WHEN invoice_type = 'credit_note' THEN total_amount ELSE 0 END), 0) as credited
+         FROM invoices
+         WHERE status != 'draft'`
+      )
+      .get() as { invoiced: number; credited: number };
+
     return {
+      invoiced_amount: revenue.invoiced,
+      credit_notes_amount: revenue.credited,
+      net_revenue: revenue.invoiced - revenue.credited,
       amount_awaiting_payment: awaitingResult.amount,
       awaiting_count: awaitingResult.count,
       overdue_amount: overdueResult.amount,

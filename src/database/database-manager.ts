@@ -12,6 +12,8 @@ import type { DatabaseInfo, DatabaseStats } from './types';
 // Import SQL schema as a string (Vite handles this automatically with ?raw suffix)
 import schemaSql from './schema.sql?raw';
 import migration002Sql from './migrations/002_add_quotes_and_signatures.sql?raw';
+import migration003Sql from './migrations/003_add_seller_legal_mentions.sql?raw';
+import migration004Sql from './migrations/004_add_credit_notes.sql?raw';
 
 /**
  * Incremental migrations applied (in order) on top of schema.sql.
@@ -19,6 +21,8 @@ import migration002Sql from './migrations/002_add_quotes_and_signatures.sql?raw'
  */
 const MIGRATIONS: { version: string; sql: string }[] = [
   { version: '002', sql: migration002Sql },
+  { version: '003', sql: migration003Sql },
+  { version: '004', sql: migration004Sql },
 ];
 
 /**
@@ -35,7 +39,10 @@ export function runMigrations(
     'SELECT 1 FROM schema_migrations WHERE version = ?'
   );
 
-  for (const migration of migrations) {
+  // Always in version order, whatever the order of the list
+  const ordered = [...migrations].sort((a, b) => a.version.localeCompare(b.version));
+
+  for (const migration of ordered) {
     if (isApplied.get(migration.version)) continue;
 
     // SQLite has no "ADD COLUMN IF NOT EXISTS": drop ALTERs whose column is
@@ -220,11 +227,12 @@ export class DatabaseManager {
       .prepare(
         `
       SELECT
-        (SELECT COUNT(*) FROM invoices) as total_invoices,
-        (SELECT COUNT(*) FROM invoices WHERE status = 'draft') as draft_invoices,
-        (SELECT COUNT(*) FROM invoices WHERE status = 'finalized') as finalized_invoices,
-        (SELECT COUNT(*) FROM invoices WHERE status = 'sent') as sent_invoices,
-        (SELECT COUNT(*) FROM invoices WHERE is_signed = 1) as signed_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE invoice_type != 'credit_note') as total_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE invoice_type != 'credit_note' AND status = 'draft') as draft_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE invoice_type != 'credit_note' AND status = 'finalized') as finalized_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE invoice_type != 'credit_note' AND status = 'sent') as sent_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE invoice_type != 'credit_note' AND is_signed = 1) as signed_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE invoice_type = 'credit_note' AND status != 'draft') as total_credit_notes,
         (SELECT COUNT(*) FROM quotes) as total_quotes,
         (SELECT COUNT(*) FROM parties) as total_parties,
         (SELECT COUNT(*) FROM parties WHERE party_type = 'customer') as total_customers,

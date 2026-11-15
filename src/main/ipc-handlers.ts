@@ -8,9 +8,12 @@ import { ipcMain } from 'electron';
 import { DatabaseService } from '../database';
 import { registerSettingsHandlers } from './settings-handlers';
 import { registerExportHandlers } from './export-handlers';
+import { registerQuoteExportHandlers } from './quote-export-handlers';
+import { registerCredentialsHandlers } from './credentials-handlers';
 import type {
   InvoiceDraftInput,
   InvoiceDraftLineInput,
+  PaymentInput,
 } from '../database/repositories/invoice-repository';
 import type {
   Invoice,
@@ -48,6 +51,8 @@ export async function initializeIPC(): Promise<void> {
   registerDatabaseHandlers();
   registerSettingsHandlers(getDB);
   registerExportHandlers(getDB);
+  registerQuoteExportHandlers(getDB);
+  registerCredentialsHandlers();
 
   console.log('IPC handlers registered');
 }
@@ -269,6 +274,48 @@ function registerInvoiceHandlers(): void {
     try {
       const payments = getDB().invoices.findPayments(invoiceId);
       return { success: true, data: payments };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Record a (possibly partial) payment
+  ipcMain.handle('invoice:recordPayment', async (_, invoiceId: number, payment: PaymentInput) => {
+    try {
+      const id = getDB().invoices.recordPayment(invoiceId, payment);
+      return { success: true, data: id };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Delete a payment recorded by mistake
+  ipcMain.handle('invoice:deletePayment', async (_, paymentId: number) => {
+    try {
+      const success = getDB().invoices.deletePayment(paymentId);
+      return success
+        ? { success, data: success }
+        : { success, data: success, error: 'Paiement introuvable.' };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Create a draft credit note (avoir) for an issued invoice
+  ipcMain.handle('invoice:createCreditNote', async (_, invoiceId: number) => {
+    try {
+      const id = getDB().invoices.createCreditNote(invoiceId);
+      return { success: true, data: id };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Credit notes attached to an invoice
+  ipcMain.handle('invoice:getCreditNotes', async (_, invoiceId: number) => {
+    try {
+      const creditNotes = getDB().invoices.findCreditNotes(invoiceId);
+      return { success: true, data: creditNotes };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -537,7 +584,17 @@ function registerQuoteHandlers(): void {
   // Convert quote to a draft invoice
   ipcMain.handle('quote:convertToInvoice', async (_, id: number) => {
     try {
-      const data = getDB().quotes.convertToInvoice(id);
+      // Payment term of the invoice: the company's default (30 days otherwise)
+      const company = getDB().parties.findAll({ party_type: 'company' })[0] as
+        | { default_payment_terms_days?: number | null }
+        | undefined;
+      const terms = company?.default_payment_terms_days;
+      const data = getDB().quotes.convertToInvoice(
+        id,
+        typeof terms === 'number' && Number.isInteger(terms) && terms >= 0
+          ? { payment_terms_days: terms }
+          : {}
+      );
       return { success: true, data };
     } catch (error: any) {
       return { success: false, error: error.message };

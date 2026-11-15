@@ -478,7 +478,7 @@ describe('InvoiceRepository', () => {
       expect(repo.findCompleteById(9999)).toBeUndefined();
     });
 
-    it('sums revenue of sent and paid invoices only', () => {
+    it('sums revenue of issued invoices only (drafts excluded)', () => {
       expect(repo.getTotalRevenue()).toBe(18000);
       expect(repo.getTotalRevenue('2026-02-01')).toBe(6000);
       expect(repo.getTotalRevenue('2026-01-01', '2026-01-31')).toBe(12000);
@@ -535,7 +535,7 @@ describe('InvoiceRepository', () => {
         invoice_date: isoDate(-60),
       });
 
-      expect(repo.getFinancialMetrics(30)).toEqual({
+      expect(repo.getFinancialMetrics(30)).toMatchObject({
         amount_awaiting_payment: 7500 + 700,
         awaiting_count: 2,
         overdue_amount: 5000,

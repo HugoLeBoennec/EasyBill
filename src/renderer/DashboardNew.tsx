@@ -19,6 +19,7 @@ interface Stats {
   finalized_invoices: number;
   sent_invoices: number;
   signed_invoices: number;
+  total_credit_notes?: number;
   total_quotes: number;
   total_parties: number;
   total_customers: number;
@@ -39,6 +40,9 @@ interface FinancialMetrics {
   overdue_amount: number;
   overdue_count: number;
   payment_terms_days: number;
+  invoiced_amount?: number;
+  credit_notes_amount?: number;
+  net_revenue?: number;
 }
 
 const DashboardNew = () => {
@@ -152,7 +156,19 @@ const DashboardNew = () => {
 
       {/* Financial Metrics */}
       {financialMetrics && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg shadow-lg p-6 text-white">
+            <p className="text-emerald-100 text-sm font-medium">Chiffre d'affaires net</p>
+            <p className="text-xs text-emerald-200 mb-4">Factures émises moins avoirs</p>
+            <p className="text-4xl font-bold">
+              {formatAmount(financialMetrics.net_revenue ?? 0)}
+            </p>
+            <p className="text-sm text-emerald-100 mt-2">
+              {formatAmount(financialMetrics.invoiced_amount ?? 0)} facturés, dont{' '}
+              {formatAmount(financialMetrics.credit_notes_amount ?? 0)} d'avoirs
+            </p>
+          </div>
+
           <div className="bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-lg shadow-lg p-6 text-white">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -302,12 +318,18 @@ const DashboardNew = () => {
                     >
                       {invoice.invoice_number}
                     </Link>
+                    {invoice.invoice_type === 'credit_note' && (
+                      <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-purple-100 text-purple-800">
+                        Avoir
+                      </span>
+                    )}
                     <div className="text-sm text-gray-600">
                       {formatDate(invoice.invoice_date)}
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="font-bold text-gray-900">
+                      {invoice.invoice_type === 'credit_note' ? '−' : ''}
                       {formatAmount(invoice.total_amount)}
                     </div>
                     <div className="text-xs text-gray-500">{invoice.status}</div>

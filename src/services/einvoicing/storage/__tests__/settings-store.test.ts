@@ -1,343 +1,196 @@
 /**
- * Settings Store Tests
+ * Settings Store Tests (renderer side: IPC client, validation, legacy migration)
  */
 
-import { SettingsStore } from '../settings-store';
-import { DEFAULT_SETTINGS, type EInvoicingSettings } from '../types';
+import { SettingsStore, LEGACY_STORAGE_KEY, type CredentialsApi } from '../settings-store';
+import {
+  DEFAULT_SETTINGS,
+  type EInvoicingSettingsInput,
+  type PublicEInvoicingSettings,
+} from '../types';
+
+const { clientId: _i, clientSecret: _s, ...PUBLIC } = DEFAULT_SETTINGS;
+const publicSettings = (o: Partial<PublicEInvoicingSettings> = {}): PublicEInvoicingSettings => ({
+  ...PUBLIC,
+  hasClientId: false,
+  hasClientSecret: false,
+  encryptionAvailable: true,
+  ...o,
+});
+const input = (o: Partial<EInvoicingSettingsInput> = {}): EInvoicingSettingsInput => ({
+  ...PUBLIC,
+  ...o,
+});
+
+function makeApi(): CredentialsApi {
+  return {
+    get: vi.fn(async () => publicSettings()),
+    save: vi.fn(async () => ({ ok: true as const, settings: publicSettings() })),
+    clear: vi.fn(async () => publicSettings()),
+    importLegacy: vi.fn(async () => ({ ok: true as const, settings: publicSettings() })),
+  };
+}
 
 describe('SettingsStore', () => {
+  let api: CredentialsApi;
+  let ls: Record<string, string>;
   let store: SettingsStore;
-  let mockLocalStorage: { [key: string]: string };
 
   beforeEach(() => {
-    store = new SettingsStore();
-
-    // Mock localStorage
-    mockLocalStorage = {};
-    global.localStorage = {
-      getItem: (key: string) => mockLocalStorage[key] || null,
-      setItem: (key: string, value: string) => {
-        mockLocalStorage[key] = value;
+    api = makeApi();
+    ls = {};
+    store = new SettingsStore(api, {
+      getItem: (k) => ls[k] ?? null,
+      removeItem: (k) => {
+        delete ls[k];
       },
-      removeItem: (key: string) => {
-        delete mockLocalStorage[key];
-      },
-      clear: () => {
-        mockLocalStorage = {};
-      },
-      length: Object.keys(mockLocalStorage).length,
-      key: (index: number) => Object.keys(mockLocalStorage)[index] || null,
-    };
+    });
   });
 
-  describe('load', () => {
-    it('should return default settings when localStorage is empty', () => {
-      const settings = store.load();
-      expect(settings).toEqual(DEFAULT_SETTINGS);
+  describe('load / save / clear', () => {
+    it('loads masked settings from the main process', async () => {
+      api.get = vi.fn(async () => publicSettings({ hasClientSecret: true }));
+      expect((await store.load()).hasClientSecret).toBe(true);
     });
 
-    it('should load settings from localStorage', () => {
-      const testSettings: EInvoicingSettings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        platform: 'tiime',
-        clientId: 'test-client-id',
-      };
-
-      store.save(testSettings);
-      const loaded = store.load();
-
-      expect(loaded).toEqual(testSettings);
-    });
-
-    it('should return defaults if JSON parse fails', () => {
-      mockLocalStorage['einvoicing_settings'] = 'invalid json';
-      const settings = store.load();
-      expect(settings).toEqual(DEFAULT_SETTINGS);
-    });
-
-    it('should return defaults if version mismatch', () => {
-      mockLocalStorage['einvoicing_settings'] = JSON.stringify({
-        version: 999,
-        settings: { enabled: true },
+    it('falls back to defaults if load fails', async () => {
+      api.get = vi.fn(async () => {
+        throw new Error('ipc');
       });
-      const settings = store.load();
-      expect(settings).toEqual(DEFAULT_SETTINGS);
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      expect(await store.load()).toMatchObject({ ...PUBLIC, hasClientSecret: false });
+    });
+
+    it('sends the input to the main process and never touches localStorage', async () => {
+      const payload = input({ clientSecret: 'abc' });
+      expect((await store.save(payload)).ok).toBe(true);
+      expect(api.save).toHaveBeenCalledWith(payload);
+      expect(Object.keys(ls)).toHaveLength(0);
+    });
+
+    it('returns a French error if save throws', async () => {
+      api.save = vi.fn(async () => {
+        throw new Error('ipc');
+      });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const res = await store.save(input());
+      expect(res).toMatchObject({ ok: false, code: 'io' });
+    });
+
+    it('clears via the main process', async () => {
+      await store.clear();
+      expect(api.clear).toHaveBeenCalled();
     });
   });
 
-  describe('save', () => {
-    it('should save settings to localStorage', () => {
-      const testSettings: EInvoicingSettings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        clientId: 'test-id',
-      };
+  describe('migrateLegacy', () => {
+    const legacy = { ...DEFAULT_SETTINGS, enabled: true, clientId: 'id', clientSecret: 'sec' };
+    const seed = () => {
+      ls[LEGACY_STORAGE_KEY] = JSON.stringify({ version: 1, settings: legacy, lastUpdated: 'x' });
+    };
 
-      store.save(testSettings);
-
-      const raw = mockLocalStorage['einvoicing_settings'];
-      expect(raw).toBeDefined();
-
-      const parsed = JSON.parse(raw);
-      expect(parsed.version).toBe(1);
-      expect(parsed.settings).toEqual(testSettings);
-      expect(parsed.lastUpdated).toBeDefined();
+    it('does nothing without legacy data', async () => {
+      expect(await store.migrateLegacy()).toBeNull();
+      expect(api.importLegacy).not.toHaveBeenCalled();
     });
 
-    it('should throw error if save fails', () => {
-      // Make setItem throw error
-      global.localStorage.setItem = () => {
-        throw new Error('Storage full');
-      };
+    it('sends legacy settings once and deletes them from localStorage', async () => {
+      seed();
+      const res = await store.migrateLegacy();
+      expect(res?.ok).toBe(true);
+      expect(api.importLegacy).toHaveBeenCalledWith(legacy);
+      expect(ls[LEGACY_STORAGE_KEY]).toBeUndefined();
+      expect(await store.migrateLegacy()).toBeNull();
+    });
 
-      const testSettings = { ...DEFAULT_SETTINGS };
-      expect(() => store.save(testSettings)).toThrow(
-        'Failed to save settings'
+    it('deletes clear-text secrets and reports an error when encryption is unavailable', async () => {
+      seed();
+      api.importLegacy = vi.fn(async (l) =>
+        'clientSecret' in l
+          ? { ok: false as const, code: 'encryption-unavailable' as const, message: 'pas de chiffrement' }
+          : { ok: true as const, settings: publicSettings() }
       );
+      const res = await store.migrateLegacy();
+      expect(res).toMatchObject({ ok: false, code: 'encryption-unavailable' });
+      expect(ls[LEGACY_STORAGE_KEY]).toBeUndefined();
+      const second = (api.importLegacy as ReturnType<typeof vi.fn>).mock.calls[1][0];
+      expect(second.clientSecret).toBeUndefined();
+      expect(second.clientId).toBeUndefined();
     });
-  });
 
-  describe('clear', () => {
-    it('should remove settings from localStorage', () => {
-      store.save({ ...DEFAULT_SETTINGS, enabled: true });
-      expect(mockLocalStorage['einvoicing_settings']).toBeDefined();
+    it('keeps legacy data on I/O failure so it can be retried', async () => {
+      seed();
+      api.importLegacy = vi.fn(async () => ({ ok: false as const, code: 'io' as const, message: 'x' }));
+      await store.migrateLegacy();
+      expect(ls[LEGACY_STORAGE_KEY]).toBeDefined();
+    });
 
-      store.clear();
-      expect(mockLocalStorage['einvoicing_settings']).toBeUndefined();
+    it('drops unparsable legacy data', async () => {
+      ls[LEGACY_STORAGE_KEY] = 'invalid json';
+      expect(await store.migrateLegacy()).toBeNull();
+      expect(ls[LEGACY_STORAGE_KEY]).toBeUndefined();
     });
   });
 
   describe('validate', () => {
-    it('should pass validation when disabled', () => {
-      const settings = { ...DEFAULT_SETTINGS, enabled: false };
-      const result = store.validate(settings);
-
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
+    const valid = input({
+      enabled: true,
+      apiEndpoint: 'https://api.example.com',
+      clientId: 'id',
+      clientSecret: 'secret',
     });
 
-    it('should require API endpoint when enabled', () => {
-      const settings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: '',
-      };
-      const result = store.validate(settings);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('API endpoint is required');
+    it('passes when disabled', () => {
+      expect(store.validate(input({ enabled: false })).valid).toBe(true);
     });
 
-    it('should validate API endpoint format', () => {
-      const settings: EInvoicingSettings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: 'not-a-url',
-        clientId: 'test',
-        clientSecret: 'secret',
-      };
-      const result = store.validate(settings);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('API endpoint must be a valid URL');
+    it('requires an API endpoint when enabled', () => {
+      const r = store.validate({ ...valid, apiEndpoint: '' });
+      expect(r.valid).toBe(false);
+      expect(r.errors).toContain("L'adresse de l'API est obligatoire");
     });
 
-    it('should require client ID for non-other platforms', () => {
-      const settings: EInvoicingSettings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        platform: 'chorus-pro',
-        apiEndpoint: 'https://api.example.com',
-        clientId: '',
-        clientSecret: 'secret',
-      };
-      const result = store.validate(settings);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('Client ID is required');
+    it('validates the endpoint format', () => {
+      const r = store.validate({ ...valid, apiEndpoint: 'not-a-url' });
+      expect(r.errors).toContain("L'adresse de l'API doit être une URL valide");
     });
 
-    it('should require client secret', () => {
-      const settings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: 'https://api.example.com',
-        clientId: 'test',
-        clientSecret: '',
-      };
-      const result = store.validate(settings);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('Client secret is required');
+    it('requires client ID except for other platforms', () => {
+      expect(store.validate({ ...valid, clientId: '' }).valid).toBe(false);
+      expect(store.validate({ ...valid, clientId: '', platform: 'other' }).valid).toBe(true);
     });
 
-    it('should pass validation with all required fields', () => {
-      const settings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: 'https://api.example.com',
-        clientId: 'test-id',
-        clientSecret: 'test-secret',
-      };
-      const result = store.validate(settings);
-
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
+    it('requires a client secret unless one is already stored', () => {
+      expect(store.validate({ ...valid, clientSecret: '' }).errors).toContain('Le secret client est obligatoire');
+      expect(store.validate({ ...valid, clientSecret: '' }, { hasClientSecret: true }).valid).toBe(true);
+      expect(store.validate({ ...valid, clientId: '' }, { hasClientId: true }).valid).toBe(true);
     });
 
-    it('should allow empty client ID for other platform', () => {
-      const settings: EInvoicingSettings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        platform: 'other',
-        apiEndpoint: 'https://api.example.com',
-        clientId: '',
-        clientSecret: 'secret',
-      };
-      const result = store.validate(settings);
+    it('trims whitespace', () => {
+      const r = store.validate({ ...valid, apiEndpoint: '  ', clientId: '  ', clientSecret: '  ' });
+      expect(r.valid).toBe(false);
+      expect(r.errors.length).toBeGreaterThan(2);
+    });
 
-      expect(result.valid).toBe(true);
+    it('passes with all required fields', () => {
+      expect(store.validate(valid)).toEqual({ valid: true, errors: [] });
     });
   });
 
   describe('getDefaultEndpoint', () => {
-    it('should return qualification endpoint for chorus-pro', () => {
-      const endpoint = store.getDefaultEndpoint('chorus-pro', 'qualification');
-      expect(endpoint).toBe('https://api-qualif.piste.gouv.fr/cpro/v1');
-    });
-
-    it('should return production endpoint for chorus-pro', () => {
-      const endpoint = store.getDefaultEndpoint('chorus-pro', 'production');
-      expect(endpoint).toBe('https://api.piste.gouv.fr/cpro/v1');
-    });
-
-    it('should return empty string for other platform', () => {
-      const endpoint = store.getDefaultEndpoint('other', 'production');
-      expect(endpoint).toBe('');
+    it('returns endpoints per platform/environment', () => {
+      expect(store.getDefaultEndpoint('chorus-pro', 'qualification')).toBe('https://api-qualif.piste.gouv.fr/cpro/v1');
+      expect(store.getDefaultEndpoint('chorus-pro', 'production')).toBe('https://api.piste.gouv.fr/cpro/v1');
+      expect(store.getDefaultEndpoint('other', 'production')).toBe('');
     });
   });
 
   describe('isConfigured', () => {
-    it('should return false when disabled', () => {
-      store.save({ ...DEFAULT_SETTINGS, enabled: false });
-      expect(store.isConfigured()).toBe(false);
-    });
-
-    it('should return false when missing credentials', () => {
-      store.save({
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: 'https://api.example.com',
-      });
-      expect(store.isConfigured()).toBe(false);
-    });
-
-    it('should return true when fully configured', () => {
-      store.save({
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: 'https://api.example.com',
-        clientId: 'test-id',
-        clientSecret: 'test-secret',
-      });
-      expect(store.isConfigured()).toBe(true);
-    });
-  });
-
-  describe('getSummary', () => {
-    it('should return settings summary', () => {
-      store.save({
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        platform: 'pennylane',
-        environment: 'production',
-        defaultFormat: 'ubl',
-      });
-
-      const summary = store.getSummary();
-
-      expect(summary.enabled).toBe(true);
-      expect(summary.platform).toBe('pennylane');
-      expect(summary.environment).toBe('production');
-      expect(summary.format).toBe('ubl');
-    });
-  });
-
-  describe('export/import', () => {
-    it('should export settings as JSON', () => {
-      const testSettings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        clientId: 'test-id',
-      };
-      store.save(testSettings);
-
-      const exported = store.export();
-      const parsed = JSON.parse(exported);
-
-      expect(parsed).toEqual(testSettings);
-    });
-
-    it('should import settings from JSON', () => {
-      const testSettings: EInvoicingSettings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: 'https://api.example.com',
-        clientId: 'imported-id',
-        clientSecret: 'imported-secret',
-      };
-
-      const json = JSON.stringify(testSettings);
-      store.import(json);
-
-      const loaded = store.load();
-      expect(loaded).toEqual(testSettings);
-    });
-
-    it('should throw error on invalid JSON import', () => {
-      expect(() => store.import('invalid json')).toThrow(
-        'Failed to import settings'
-      );
-    });
-
-    it('should validate imported settings', () => {
-      const invalidSettings: EInvoicingSettings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: 'not-a-url',
-      };
-
-      const json = JSON.stringify(invalidSettings);
-      expect(() => store.import(json)).toThrow('Failed to import settings');
-    });
-  });
-
-  describe('Edge Cases', () => {
-    it('should handle trimmed strings in validation', () => {
-      const settings = {
-        ...DEFAULT_SETTINGS,
-        enabled: true,
-        apiEndpoint: '  ',
-        clientId: '  ',
-        clientSecret: '  ',
-      };
-      const result = store.validate(settings);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors.length).toBeGreaterThan(0);
-    });
-
-    it('should persist multiple saves correctly', () => {
-      const settings1 = { ...DEFAULT_SETTINGS, enabled: true };
-      const settings2 = { ...DEFAULT_SETTINGS, enabled: false, platform: 'sage' as const };
-
-      store.save(settings1);
-      expect(store.load().enabled).toBe(true);
-
-      store.save(settings2);
-      expect(store.load().enabled).toBe(false);
-      expect(store.load().platform).toBe('sage');
+    it('is true only when enabled with endpoint and both secrets stored', async () => {
+      api.get = vi.fn(async () => publicSettings({ enabled: true, apiEndpoint: 'https://a.io', hasClientId: true, hasClientSecret: true }));
+      expect(await store.isConfigured()).toBe(true);
+      api.get = vi.fn(async () => publicSettings({ enabled: true, apiEndpoint: 'https://a.io' }));
+      expect(await store.isConfigured()).toBe(false);
     });
   });
 });

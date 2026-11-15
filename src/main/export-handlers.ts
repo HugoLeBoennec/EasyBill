@@ -16,6 +16,7 @@ import {
   buildExportFilename,
   INVOICE_EXPORT_FORMATS,
   InvoiceMappingError,
+  getInvoiceExportWarnings,
   mapInvoiceToEN16931,
 } from './invoice-mapper';
 import type { InvoiceExportFormat, InvoiceExportSource } from './invoice-mapper';
@@ -26,6 +27,8 @@ export interface InvoiceExportResult {
   /** Absolute path of the written file (absent when canceled) */
   path?: string;
   format: InvoiceExportFormat;
+  /** Non-blocking remarks (missing IBAN, VAT number...), French texts */
+  warnings: string[];
 }
 
 const DIALOG_FILTERS: Record<InvoiceExportFormat, { name: string; extensions: string[] }> = {
@@ -52,6 +55,11 @@ function toFrenchError(error: unknown): string {
     return "Impossible d'écrire le fichier : espace disque insuffisant.";
   }
   return `Échec de l'export de la facture : ${message}`;
+}
+
+/** "Facture-AV-2026-001.pdf" -> "Avoir-AV-2026-001.pdf" for a credit note. */
+function creditNoteFilename(filename: string, isCreditNote: boolean): string {
+  return isCreditNote ? filename.replace(/^Facture-/, 'Avoir-') : filename;
 }
 
 /** Load the invoice, its lines and both parties. */
@@ -81,7 +89,12 @@ export async function generateInvoiceDocument(
   db: DatabaseService,
   invoiceId: number,
   format: InvoiceExportFormat
-): Promise<{ data: Uint8Array | string; defaultFilename: string }> {
+): Promise<{
+  data: Uint8Array | string;
+  defaultFilename: string;
+  isCreditNote: boolean;
+  warnings: string[];
+}> {
   if (!INVOICE_EXPORT_FORMATS.includes(format)) {
     throw new InvoiceMappingError([`Format d'export non pris en charge : ${String(format)}.`]);
   }
@@ -89,11 +102,37 @@ export async function generateInvoiceDocument(
   const source = loadExportSource(db, invoiceId);
   if (source.invoice.status === 'draft') {
     throw new InvoiceMappingError([
-      "Cette facture est encore un brouillon : elle n'a pas de numéro définitif. Finalisez-la avant de l'exporter.",
+      source.invoice.invoice_type === 'credit_note'
+        ? "Cet avoir est encore un brouillon : il n'a pas de numéro définitif. Finalisez-le avant de l'exporter."
+        : "Cette facture est encore un brouillon : elle n'a pas de numéro définitif. Finalisez-la avant de l'exporter.",
     ]);
   }
 
+  const isCreditNote = source.invoice.invoice_type === 'credit_note';
   const model = mapInvoiceToEN16931(source);
+
+  if (isCreditNote) {
+    // BG-3: a credit note (type code 381) references the invoice it corrects
+    const original = source.invoice.credited_invoice_id
+      ? db.invoices.findById(source.invoice.credited_invoice_id)
+      : undefined;
+    if (!original) {
+      throw new InvoiceMappingError(["La facture d'origine de cet avoir est introuvable."]);
+    }
+    model.invoiceDocumentReference = [
+      {
+        id: original.invoice_number,
+        documentTypeCode: '380',
+        issueDate: original.invoice_date?.slice(0, 10),
+      },
+    ];
+    // Nothing is to be paid on a credit note: no due date, and the payment
+    // terms say what happens to the amount (BR-CO-25 requires one of the two)
+    model.dueDate = undefined;
+    model.paymentTerms = {
+      note: `Avoir sur la facture ${original.invoice_number} : montant à déduire du solde dû ou à rembourser`,
+    };
+  }
   const result = await invoiceGenerator.generate(model, {
     format,
     language: 'fr',
@@ -109,7 +148,12 @@ export async function generateInvoiceDocument(
 
   return {
     data: result.data,
-    defaultFilename: buildExportFilename(source.invoice.invoice_number, format),
+    defaultFilename: creditNoteFilename(
+      buildExportFilename(source.invoice.invoice_number, format),
+      isCreditNote
+    ),
+    isCreditNote,
+    warnings: getInvoiceExportWarnings(source),
   };
 }
 
@@ -122,14 +166,14 @@ export function registerExportHandlers(getDB: () => DatabaseService): void {
     'invoice:export',
     async (event, invoiceId: number, format: InvoiceExportFormat = 'facturx-pdf') => {
       try {
-        const { data, defaultFilename } = await generateInvoiceDocument(
+        const { data, defaultFilename, isCreditNote, warnings } = await generateInvoiceDocument(
           getDB(),
           Number(invoiceId),
           format
         );
 
         const options: SaveDialogOptions = {
-          title: 'Exporter la facture',
+          title: isCreditNote ? "Exporter l'avoir" : 'Exporter la facture',
           defaultPath: defaultFilename,
           filters: [DIALOG_FILTERS[format]],
           properties: ['showOverwriteConfirmation', 'createDirectory'],
@@ -140,7 +184,7 @@ export function registerExportHandlers(getDB: () => DatabaseService): void {
           : await dialog.showSaveDialog(options);
 
         if (choice.canceled || !choice.filePath) {
-          const canceled: InvoiceExportResult = { canceled: true, format };
+          const canceled: InvoiceExportResult = { canceled: true, format, warnings: [] };
           return { success: true, data: canceled };
         }
 
@@ -157,7 +201,12 @@ export function registerExportHandlers(getDB: () => DatabaseService): void {
           await fs.writeFile(filePath, data);
         }
 
-        const exported: InvoiceExportResult = { canceled: false, path: filePath, format };
+        const exported: InvoiceExportResult = {
+          canceled: false,
+          path: filePath,
+          format,
+          warnings,
+        };
         return { success: true, data: exported };
       } catch (error: unknown) {
         // Missing data is an expected situation, reported to the user: only log real failures

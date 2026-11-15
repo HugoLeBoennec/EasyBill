@@ -11,14 +11,25 @@ import { Link } from 'react-router-dom';
 import {
   CompanyErrors,
   CompanyForm,
+  CompanyTextFields,
   EMPTY_COMPANY_FORM,
   computeFrenchVatNumber,
   formFromParty,
   isPlaceholderCompany,
+  normalizeCompanyForm,
   partyFieldsFromForm,
   sirenFromSiret,
   validateCompanyForm,
 } from './companyValidation';
+import {
+  DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT,
+  DEFAULT_LATE_PENALTY_TEXT,
+  INDIVIDUAL_ENTREPRENEUR_MENTION,
+  RECOVERY_FEE_TEXT,
+  VAT_FRANCHISE_MENTION,
+  hasShareCapital,
+  isIndividualEntrepreneur,
+} from '../../database/company-legal';
 
 const LEGAL_FORMS = [
   'EI',
@@ -139,27 +150,36 @@ const CompanyPage = () => {
     if (saved || failure) topRef.current?.scrollIntoView({ block: 'start' });
   }, [saved, failure]);
 
-  const setField = (name: keyof CompanyForm, value: string) => {
+  const setField = (name: keyof CompanyForm, value: string | boolean) => {
     setSaved(false);
     setForm((prev) => {
       const next = { ...prev, [name]: value };
       // The SIREN is the first 9 digits of the SIRET
-      if (name === 'siret') next.siren = sirenFromSiret(value);
+      if (name === 'siret') next.siren = sirenFromSiret(String(value));
       return next;
     });
-    // Clear the error of the field being corrected
+    // Clear the error of the field being corrected (the VAT franchise switch
+    // also lifts the VAT number requirement)
     setErrors((prev) => {
-      if (!prev[name]) return prev;
+      const cleared: (keyof CompanyForm)[] =
+        name === 'vat_franchise' ? [name, 'vat_number'] : [name];
+      if (!cleared.some((key) => prev[key])) return prev;
       const next = { ...prev };
-      delete next[name];
+      cleared.forEach((key) => delete next[key]);
       return next;
     });
   };
 
   const handleChange = (
-    e: ChangeEvent<HTMLInputElement | HTMLSelectElement>
+    e: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
-    setField(e.target.name as keyof CompanyForm, e.target.value);
+    const target = e.target;
+    setField(
+      target.name as keyof CompanyForm,
+      target instanceof HTMLInputElement && target.type === 'checkbox'
+        ? target.checked
+        : target.value
+    );
   };
 
   const isFrench = form.country_code.trim().toUpperCase() === 'FR';
@@ -206,7 +226,7 @@ const CompanyPage = () => {
         }
         setCompanyId(response.data);
       }
-      setForm(fields);
+      setForm(normalizeCompanyForm(form));
       setConfigured(true);
       setSaved(true);
     } catch (err) {
@@ -229,14 +249,20 @@ const CompanyPage = () => {
     : [...COUNTRIES, [form.country_code, form.country_code] as [string, string]];
 
   const text = (
-    name: keyof CompanyForm,
-    props: { placeholder?: string; type?: string; list?: string } = {}
+    name: keyof CompanyTextFields,
+    props: {
+      placeholder?: string;
+      type?: string;
+      list?: string;
+      inputMode?: 'numeric' | 'decimal';
+    } = {}
   ) => (
     <input
       id={`company_${name}`}
       name={name}
       type={props.type || 'text'}
       list={props.list}
+      inputMode={props.inputMode}
       value={form[name]}
       onChange={handleChange}
       placeholder={props.placeholder}
@@ -245,6 +271,33 @@ const CompanyPage = () => {
       className={inputClass(Boolean(errors[name]))}
     />
   );
+
+  const checkbox = (
+    name: 'vat_franchise' | 'recovery_fee_enabled',
+    label: ReactNode,
+    description: ReactNode
+  ) => (
+    <label
+      htmlFor={`company_${name}`}
+      className="flex items-start gap-3 cursor-pointer"
+    >
+      <input
+        id={`company_${name}`}
+        name={name}
+        type="checkbox"
+        checked={form[name]}
+        onChange={handleChange}
+        className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+      />
+      <span>
+        <span className="block text-sm font-medium text-gray-700">{label}</span>
+        <span className="block text-xs text-gray-500">{description}</span>
+      </span>
+    </label>
+  );
+
+  const individual = isIndividualEntrepreneur(form.legal_form);
+  const withCapital = hasShareCapital(form.legal_form);
 
   const errorCount = Object.keys(errors).length;
 
@@ -380,9 +433,14 @@ const CompanyPage = () => {
             <Field
               name="vat_number"
               label="N° de TVA intracommunautaire"
+              required={isFrench && !form.vat_franchise}
               error={errors.vat_number}
               className="md:col-span-2"
-              hint="Laissez vide si vous n'êtes pas assujetti (franchise en base de TVA)."
+              hint={
+                form.vat_franchise
+                  ? 'Facultatif en franchise en base : à renseigner seulement si vous en avez un (opérations avec l\'Union européenne).'
+                  : 'Obligatoire sur vos factures si vous êtes assujetti à la TVA.'
+              }
             >
               <div className="flex gap-2">
                 {text('vat_number', { placeholder: 'FR12345678901' })}
@@ -404,12 +462,188 @@ const CompanyPage = () => {
               </div>
             </Field>
           </div>
-          {!form.vat_number.trim() && (
+          <div className="mt-4">
+            {checkbox(
+              'vat_franchise',
+              'Franchise en base de TVA (art. 293 B du CGI)',
+              'À cocher si vous ne facturez pas la TVA : micro-entrepreneur ou entreprise sous les seuils de la franchise.'
+            )}
+          </div>
+          {form.vat_franchise && (
             <div className="mt-4 bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded text-sm">
-              Sans numéro de TVA, vos factures doivent porter la mention
-              « TVA non applicable, art. 293 B du CGI » (franchise en base).
+              Vos factures et devis seront émis sans TVA (taux à 0 % par
+              défaut) et porteront la mention « {VAT_FRANCHISE_MENTION} ». Le
+              numéro de TVA n'est plus exigé. Décochez cette case dès que vous
+              dépassez les seuils de la franchise.
             </div>
           )}
+        </div>
+
+        {/* Legal mentions */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-1">
+            Mentions légales
+          </h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Mentions obligatoires imprimées en pied de vos factures.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field
+              name="share_capital"
+              label="Capital social (€)"
+              error={errors.share_capital}
+              hint={
+                withCapital
+                  ? 'Obligatoire sur les factures d\'une société (SARL, SAS, SA...).'
+                  : 'Sans objet pour cette forme juridique (pas de capital social).'
+              }
+            >
+              <input
+                id="company_share_capital"
+                name="share_capital"
+                type="text"
+                inputMode="decimal"
+                value={withCapital ? form.share_capital : ''}
+                onChange={handleChange}
+                disabled={!withCapital}
+                placeholder={withCapital ? '10 000' : ''}
+                aria-invalid={Boolean(errors.share_capital)}
+                aria-describedby={
+                  errors.share_capital ? 'company_share_capital_error' : undefined
+                }
+                className={`${inputClass(Boolean(errors.share_capital))} disabled:bg-gray-50 disabled:text-gray-500`}
+              />
+            </Field>
+            <Field
+              name="ape_code"
+              label="Code APE / NAF"
+              error={errors.ape_code}
+              hint="4 chiffres et une lettre, indiqué sur votre avis de situation INSEE."
+            >
+              {text('ape_code', { placeholder: '6201Z' })}
+            </Field>
+            <Field
+              name="registration_type"
+              label="Immatriculation"
+              error={errors.registration_type}
+              hint="RCS pour les commerçants et sociétés, RM pour les artisans."
+            >
+              <select
+                id="company_registration_type"
+                name="registration_type"
+                value={form.registration_type}
+                onChange={handleChange}
+                className={inputClass(Boolean(errors.registration_type))}
+              >
+                <option value="">Aucune (SIRET seul)</option>
+                <option value="RCS">
+                  RCS – Registre du commerce et des sociétés
+                </option>
+                <option value="RM">RM – Répertoire des métiers</option>
+              </select>
+            </Field>
+            <Field
+              name="registration_city"
+              label="Ville d'immatriculation"
+              error={errors.registration_city}
+              hint="Ville du greffe ou de la chambre de métiers ; le numéro est votre SIREN."
+            >
+              <input
+                id="company_registration_city"
+                name="registration_city"
+                type="text"
+                value={form.registration_type ? form.registration_city : ''}
+                onChange={handleChange}
+                disabled={!form.registration_type}
+                placeholder={form.registration_type ? 'Paris' : ''}
+                className={`${inputClass(Boolean(errors.registration_city))} disabled:bg-gray-50 disabled:text-gray-500`}
+              />
+            </Field>
+          </div>
+          {individual && (
+            <div className="mt-4 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded text-sm">
+              Entrepreneur individuel : la mention «{' '}
+              {INDIVIDUAL_ENTREPRENEUR_MENTION} », obligatoire depuis 2022, est
+              ajoutée automatiquement à côté de votre nom sur vos factures.
+            </div>
+          )}
+        </div>
+
+        {/* Bank details */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-1">
+            Coordonnées bancaires
+          </h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Imprimées sur vos factures pour le règlement par virement.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Field
+              name="iban"
+              label="IBAN"
+              error={errors.iban}
+              className="md:col-span-2"
+            >
+              {text('iban', {
+                placeholder: 'FR76 3000 6000 0112 3456 7890 189',
+              })}
+            </Field>
+            <Field name="bic" label="BIC" error={errors.bic}>
+              {text('bic', { placeholder: 'BNPAFRPP' })}
+            </Field>
+          </div>
+        </div>
+
+        {/* Payment conditions */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-1">
+            Conditions de paiement
+          </h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Conditions par défaut, reprises sur toutes vos factures.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Field
+              name="default_payment_terms_days"
+              label="Délai de paiement (jours)"
+              error={errors.default_payment_terms_days}
+              hint="30 jours par défaut, 60 jours au maximum."
+            >
+              {text('default_payment_terms_days', {
+                inputMode: 'numeric',
+                placeholder: '30',
+              })}
+            </Field>
+            <Field
+              name="late_penalty_text"
+              label="Pénalités de retard"
+              error={errors.late_penalty_text}
+              className="md:col-span-2"
+              hint="Mention obligatoire. Laissez vide pour reprendre le texte standard."
+            >
+              {text('late_penalty_text', {
+                placeholder: DEFAULT_LATE_PENALTY_TEXT,
+              })}
+            </Field>
+            <Field
+              name="early_payment_discount_text"
+              label="Escompte pour paiement anticipé"
+              error={errors.early_payment_discount_text}
+              className="md:col-span-3"
+              hint="Mention obligatoire, même en l'absence d'escompte."
+            >
+              {text('early_payment_discount_text', {
+                placeholder: DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT,
+              })}
+            </Field>
+          </div>
+          <div className="mt-4">
+            {checkbox(
+              'recovery_fee_enabled',
+              `Afficher la mention « ${RECOVERY_FEE_TEXT} »`,
+              'Obligatoire sur les factures adressées à des professionnels.'
+            )}
+          </div>
         </div>
 
         {/* Address */}

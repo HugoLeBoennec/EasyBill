@@ -274,12 +274,35 @@ export interface DocumentReference {
   id: string;                    // Document number
   documentTypeCode?: string;     // UNTDID 1001 code
   documentDescription?: string;  // Description
+  issueDate?: string;            // BT-26 (ISO 8601) issue date of the referenced invoice
 }
 
 /**
  * Complete Invoice Document (EN16931 Semantic Model)
  */
+/**
+ * French legal mentions printed on the human-readable invoice (PDF).
+ * Ready-to-print texts built by the caller; generators print them verbatim.
+ */
+export interface InvoiceLegalMentions {
+  /** e.g. "SAS au capital de 10 000 € – RCS Paris 123 456 789 – APE 6201Z" */
+  sellerLegalLine?: string;
+  /** e.g. "TVA non applicable, art. 293 B du CGI" */
+  vatExemptionText?: string;
+  /** e.g. "Paiement à 30 jours" */
+  paymentTermsText?: string;
+  /** Late-payment penalty rate mention (art. L441-10 du Code de commerce) */
+  latePenaltyText?: string;
+  /** Fixed 40 € recovery fee mention */
+  recoveryFeeText?: string;
+  /** Early-payment discount mention, e.g. "Pas d'escompte pour paiement anticipé" */
+  earlyPaymentDiscountText?: string;
+  bankDetails?: { iban?: string; bic?: string; accountHolder?: string };
+}
+
 export interface Invoice {
+  /** French legal mentions for the PDF rendering (not part of EN16931 XML) */
+  legalMentions?: InvoiceLegalMentions;
   // BG-2: Process control
   customizationId: string;       // BT-24 (e.g., 'urn:cen.eu:en16931:2017#compliant#urn:fac-turx.eu:1p0:extended')
   profileId: string;             // BT-23 (e.g., 'urn:fac-turx.eu:1p0:basic')
@@ -295,7 +318,11 @@ export interface Invoice {
   accountingCost?: string;       // BT-19 (buyer accounting reference)
   buyerReference?: string;       // BT-10 (buyer reference, mandatory in some contexts)
 
-  // BG-3: Preceding invoice reference (for credit notes)
+  // BT-13: Purchase order reference issued by the buyer
+  orderReference?: string;
+
+  // BG-3: Preceding invoice reference (for credit notes: the invoice being
+  // credited; `id` = BT-25 original invoice number, `issueDate` = BT-26)
   invoiceDocumentReference?: DocumentReference[];
 
   // BG-24: Additional documents (attachments)

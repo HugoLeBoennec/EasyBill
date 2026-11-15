@@ -71,13 +71,13 @@ const parseNumber = (value: string): number => {
 };
 
 let lineCounter = 0;
-const newLine = (): LineItem => ({
+const newLine = (vatRate = 20): LineItem => ({
   key: `line-${Date.now()}-${lineCounter++}`,
   item_name: '',
   item_description: '',
   quantity: '1',
   unit_price: '',
-  vat_rate: 20,
+  vat_rate: vatRate,
 });
 
 /** Round half away from zero after removing binary noise (as the repository does) */
@@ -137,6 +137,9 @@ const QuoteForm = () => {
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [exportWarnings, setExportWarnings] = useState<string[]>([]);
   const [customers, setCustomers] = useState<Party[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
 
@@ -157,8 +160,39 @@ const QuoteForm = () => {
     isEdit ? [] : [newLine()]
   );
   const [errors, setErrors] = useState<FormErrors>({ lineItems: {} });
+  // VAT rate of new lines: 0 % when the company is under the VAT franchise
+  const [defaultVatRate, setDefaultVatRate] = useState(20);
 
   const readOnly = status === 'converted';
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFranchise = async () => {
+      try {
+        const response = await window.electron.party.getCompany();
+        const company = (response.success ? response.data : null) as
+          | { vat_franchise?: unknown }
+          | null
+          | undefined;
+        if (cancelled || !company || !Number(company.vat_franchise)) return;
+        setDefaultVatRate(0);
+        // A brand new quote still holding its untouched first line follows
+        if (!isEdit) {
+          setLineItems((items) =>
+            items.length === 1 && !items[0].item_name && !items[0].unit_price
+              ? [{ ...items[0], vat_rate: 0 }]
+              : items
+          );
+        }
+      } catch {
+        // keep the standard rate
+      }
+    };
+    loadFranchise();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEdit]);
 
   useEffect(() => {
     const loadCustomers = async () => {
@@ -244,7 +278,7 @@ const QuoteForm = () => {
   };
 
   const addLineItem = () => {
-    setLineItems((items) => [...items, newLine()]);
+    setLineItems((items) => [...items, newLine(defaultVatRate)]);
     setErrors((prev) => ({ ...prev, lines: undefined }));
   };
 
@@ -317,6 +351,27 @@ const QuoteForm = () => {
     Object.values(e.lineItems).some((line) =>
       Object.values(line).some(Boolean)
     );
+
+  const handleExport = async () => {
+    if (quoteId === null) return;
+    setExporting(true);
+    setSubmitError(null);
+    setExportMessage(null);
+    setExportWarnings([]);
+    try {
+      const response = await window.electron.quote.export(quoteId);
+      if (!response.success) {
+        setSubmitError(response.error || "Échec de l'export du devis.");
+      } else if (response.data && !response.data.canceled) {
+        setExportMessage(`Devis exporté : ${response.data.path}`);
+        setExportWarnings(response.data.warnings);
+      }
+    } catch (err: any) {
+      setSubmitError(`Échec de l'export : ${err.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -771,6 +826,27 @@ const QuoteForm = () => {
               {submitError}
             </div>
           )}
+          {exportMessage && (
+            <div
+              role="status"
+              className="bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded mt-6"
+            >
+              {exportMessage}
+            </div>
+          )}
+          {exportWarnings.length > 0 && (
+            <div
+              role="status"
+              className="mt-4 border border-amber-400 bg-amber-50 text-amber-900 px-4 py-3 rounded"
+            >
+              <p className="font-semibold mb-1">À vérifier (l'export a bien été effectué) :</p>
+              <ul className="list-disc pl-5 space-y-1">
+                {exportWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {hasErrors(errors) && (
             <p role="alert" className="text-sm text-red-600 mt-6">
               Certains champs sont à corriger avant d'enregistrer le devis.
@@ -787,6 +863,17 @@ const QuoteForm = () => {
             >
               {readOnly ? 'Retour' : 'Annuler'}
             </button>
+            {isEdit && (
+              <button
+                type="button"
+                onClick={handleExport}
+                className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                disabled={saving || exporting}
+                title="Exporte le devis tel qu'il est enregistré"
+              >
+                {exporting ? 'Export…' : 'Exporter en PDF'}
+              </button>
+            )}
             {!readOnly && (
               <button
                 type="submit"

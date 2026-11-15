@@ -6,6 +6,12 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  CredentialsResult,
+  EInvoicingSettings,
+  EInvoicingSettingsInput,
+  PublicEInvoicingSettings,
+} from '../services/einvoicing/storage/types';
+import type {
   Invoice,
   InvoiceLine,
   Party,
@@ -29,9 +35,11 @@ import type { InvoicePayment } from '../database/types';
 import type {
   InvoiceDraftInput,
   InvoiceDraftLineInput,
+  PaymentInput,
 } from '../database/repositories/invoice-repository';
 import type { InvoiceExportFormat } from './invoice-mapper';
 import type { InvoiceExportResult } from './export-handlers';
+import type { QuoteExportResult } from './quote-export-handlers';
 
 // Type for IPC response
 interface IPCResponse<T = any> {
@@ -104,6 +112,19 @@ const invoiceAPI = {
 
   getPayments: (invoiceId: number): Promise<IPCResponse<InvoicePayment[]>> =>
     ipcRenderer.invoke('invoice:getPayments', invoiceId),
+
+  recordPayment: (invoiceId: number, payment: PaymentInput): Promise<IPCResponse<number>> =>
+    ipcRenderer.invoke('invoice:recordPayment', invoiceId, payment),
+
+  deletePayment: (paymentId: number): Promise<IPCResponse<boolean>> =>
+    ipcRenderer.invoke('invoice:deletePayment', paymentId),
+
+  // Credit notes (avoirs)
+  createCreditNote: (invoiceId: number): Promise<IPCResponse<number>> =>
+    ipcRenderer.invoke('invoice:createCreditNote', invoiceId),
+
+  getCreditNotes: (invoiceId: number): Promise<IPCResponse<Invoice[]>> =>
+    ipcRenderer.invoke('invoice:getCreditNotes', invoiceId),
 
   // Generate the document and save it through a native dialog
   export: (
@@ -194,6 +215,10 @@ const quoteAPI = {
 
   convertToInvoice: (id: number): Promise<IPCResponse<QuoteConversionResult>> =>
     ipcRenderer.invoke('quote:convertToInvoice', id),
+
+  // Generate the quote PDF and save it through a native dialog
+  export: (id: number): Promise<IPCResponse<QuoteExportResult>> =>
+    ipcRenderer.invoke('quote:export', id),
 };
 
 // E-Invoice API
@@ -221,6 +246,16 @@ const einvoiceAPI = {
 
   getTransmissionStats: (): Promise<IPCResponse<any>> =>
     ipcRenderer.invoke('einvoice:getTransmissionStats'),
+};
+
+// E-invoicing credentials API (secrets are never returned, only masked flags)
+const credentialsAPI = {
+  get: (): Promise<PublicEInvoicingSettings> => ipcRenderer.invoke('credentials:get'),
+  save: (input: EInvoicingSettingsInput): Promise<CredentialsResult> =>
+    ipcRenderer.invoke('credentials:save', input),
+  clear: (): Promise<PublicEInvoicingSettings> => ipcRenderer.invoke('credentials:clear'),
+  importLegacy: (legacy: Partial<EInvoicingSettings>): Promise<CredentialsResult> =>
+    ipcRenderer.invoke('credentials:importLegacy', legacy),
 };
 
 // Database API
@@ -253,6 +288,7 @@ contextBridge.exposeInMainWorld('electron', {
   quote: quoteAPI,
   einvoice: einvoiceAPI,
   database: databaseAPI,
+  credentials: credentialsAPI,
 });
 
 // Type definitions for renderer
@@ -262,6 +298,7 @@ export type ElectronAPI = {
   quote: typeof quoteAPI;
   einvoice: typeof einvoiceAPI;
   database: typeof databaseAPI;
+  credentials: typeof credentialsAPI;
 };
 
 // Declare global type

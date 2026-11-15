@@ -50,7 +50,7 @@ describe('database initialisation', () => {
         version: string;
       }[]
     ).map((m) => m.version);
-    expect(versions).toEqual(expect.arrayContaining(['1.0.0', '002']));
+    expect(versions).toEqual(expect.arrayContaining(['1.0.0', '002', '003']));
   });
 
   it('seeds a placeholder company party', () => {
@@ -82,10 +82,113 @@ describe('database initialisation', () => {
     db.exec(schemaSql);
     db.exec('ALTER TABLE invoices ADD COLUMN is_signed INTEGER DEFAULT 0');
 
-    expect(runMigrations(db)).toEqual(['002']);
+    expect(runMigrations(db)).toEqual(expect.arrayContaining(['002', '003']));
     expect(columnsOf(db, 'invoices')).toEqual(
       expect.arrayContaining(['is_signed', 'payment_terms_days'])
     );
+  });
+
+  describe('migration 003 (seller legal mentions)', () => {
+    const NEW_COLUMNS = [
+      'share_capital',
+      'registration_type',
+      'registration_city',
+      'ape_code',
+      'vat_franchise',
+      'iban',
+      'bic',
+      'default_payment_terms_days',
+      'late_penalty_text',
+      'recovery_fee_enabled',
+      'early_payment_discount_text',
+    ];
+
+    /** A database as left by the previous application version (schema + 002). */
+    function createPre003Db(): Database.Database {
+      const db = new Database(':memory:');
+      db.exec(schemaSql);
+      runMigrations(db, [
+        { version: '002', sql: 'CREATE TABLE IF NOT EXISTS quotes (id INTEGER PRIMARY KEY)' },
+      ]);
+      return db;
+    }
+
+    it('adds the columns on a fresh database, with safe defaults', () => {
+      const db = createTestDb();
+      expect(columnsOf(db, 'parties')).toEqual(expect.arrayContaining(NEW_COLUMNS));
+
+      const versions = (
+        db.prepare('SELECT version FROM schema_migrations').all() as { version: string }[]
+      ).map((m) => m.version);
+      expect(versions).toContain('003');
+
+      // The seeded placeholder company is not put under the franchise
+      const company = db
+        .prepare("SELECT * FROM parties WHERE party_type = 'company'")
+        .get() as Record<string, unknown>;
+      expect(company.vat_franchise).toBe(0);
+      expect(company.recovery_fee_enabled).toBe(1);
+      expect(company.share_capital).toBeNull();
+      expect(company.late_penalty_text).toBeNull();
+    });
+
+    it('upgrades an existing database and keeps its data', () => {
+      const db = createPre003Db();
+      expect(columnsOf(db, 'parties')).not.toContain('vat_franchise');
+      db.prepare(
+        `UPDATE parties SET legal_name = 'Dupont Conseil', siret = '73282932000074',
+           vat_number = 'FR44732829320', city = 'Paris' WHERE party_type = 'company'`
+      ).run();
+      db.prepare(
+        "INSERT INTO parties (party_type, legal_name) VALUES ('customer', 'Client sans TVA')"
+      ).run();
+
+      expect(runMigrations(db)).toContain('003');
+      expect(columnsOf(db, 'parties')).toEqual(expect.arrayContaining(NEW_COLUMNS));
+
+      const company = db
+        .prepare("SELECT * FROM parties WHERE party_type = 'company'")
+        .get() as Record<string, unknown>;
+      expect(company).toMatchObject({
+        legal_name: 'Dupont Conseil',
+        siret: '73282932000074',
+        vat_number: 'FR44732829320',
+        city: 'Paris',
+        vat_franchise: 0, // has a VAT number: subject to VAT
+        recovery_fee_enabled: 1,
+      });
+      const customer = db
+        .prepare("SELECT * FROM parties WHERE party_type = 'customer'")
+        .get() as Record<string, unknown>;
+      expect(customer.vat_franchise).toBe(0);
+
+      // Second run: nothing left to do
+      expect(runMigrations(db)).toEqual([]);
+    });
+
+    it('flags a configured company without VAT number as VAT franchise', () => {
+      const db = createPre003Db();
+      db.prepare(
+        `UPDATE parties SET legal_name = 'Jean Dupont', siret = '73282932000074'
+         WHERE party_type = 'company'`
+      ).run();
+
+      runMigrations(db);
+
+      const company = db
+        .prepare("SELECT vat_franchise FROM parties WHERE party_type = 'company'")
+        .get() as { vat_franchise: number };
+      expect(company.vat_franchise).toBe(1);
+    });
+
+    it('completes a database where some of the columns already exist', () => {
+      const db = createPre003Db();
+      db.exec('ALTER TABLE parties ADD COLUMN iban TEXT');
+      db.exec('ALTER TABLE parties ADD COLUMN vat_franchise INTEGER NOT NULL DEFAULT 0');
+
+      expect(runMigrations(db)).toContain('003');
+      expect(columnsOf(db, 'parties')).toEqual(expect.arrayContaining(NEW_COLUMNS));
+    });
   });
 
   it('rolls back a failing migration entirely and does not record it', () => {

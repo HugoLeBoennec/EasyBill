@@ -97,13 +97,13 @@ export function centsToAmount(cents: number | null | undefined): number {
   return Math.round(Number(cents) || 0) / 100;
 }
 
-const clean = (value: string | null | undefined): string => (value ?? '').trim();
+export const clean = (value: string | null | undefined): string => (value ?? '').trim();
 
-const isoDay = (value: string | null | undefined): string => clean(value).slice(0, 10);
+export const isoDay = (value: string | null | undefined): string => clean(value).slice(0, 10);
 
 const frenchDate = (iso: string): string => iso.split('-').reverse().join('/');
 
-function isPlaceholderCompany(party: DbParty): boolean {
+export function isPlaceholderCompany(party: DbParty): boolean {
   return clean(party.legal_name) === '' || clean(party.legal_name) === COMPANY_PLACEHOLDER_NAME;
 }
 
@@ -310,7 +310,7 @@ export function buildLegalMentions(
  * every 0 % line that is not an explicit reverse charge / intra-community /
  * out-of-scope operation is exempt with the art. 293 B mention.
  */
-function resolveTaxCategory(
+export function resolveTaxCategory(
   dbCategory: string | undefined,
   rate: number,
   vatFranchise: boolean

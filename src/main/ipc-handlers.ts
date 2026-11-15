@@ -8,6 +8,8 @@ import { ipcMain } from 'electron';
 import { DatabaseService } from '../database';
 import { registerSettingsHandlers } from './settings-handlers';
 import { registerExportHandlers } from './export-handlers';
+import { registerQuoteExportHandlers } from './quote-export-handlers';
+import { registerCredentialsHandlers } from './credentials-handlers';
 import type {
   InvoiceDraftInput,
   InvoiceDraftLineInput,
@@ -49,6 +51,8 @@ export async function initializeIPC(): Promise<void> {
   registerDatabaseHandlers();
   registerSettingsHandlers(getDB);
   registerExportHandlers(getDB);
+  registerQuoteExportHandlers(getDB);
+  registerCredentialsHandlers();
 
   console.log('IPC handlers registered');
 }

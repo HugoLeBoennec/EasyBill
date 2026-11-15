@@ -239,9 +239,27 @@ export class QuoteRepository {
   }
 
   /**
+   * Mark as expired, in one UPDATE, the draft/sent quotes whose validity date
+   * is before `today`. Accepted, rejected and converted quotes are untouched.
+   * Called when quotes are listed or counted, so no background job is needed.
+   * Returns the number of quotes updated.
+   */
+  expireOverdue(today: string = localDate()): number {
+    return this.db
+      .prepare(
+        `UPDATE quotes SET status = 'expired'
+         WHERE status IN ('draft', 'sent')
+           AND valid_until IS NOT NULL AND valid_until != ''
+           AND substr(valid_until, 1, 10) < ?`
+      )
+      .run(today).changes;
+  }
+
+  /**
    * Get complete quote with customer information
    */
   getComplete(id: number): QuoteComplete | undefined {
+    this.expireOverdue();
     const stmt = this.db.prepare('SELECT * FROM v_quotes_complete WHERE id = ?');
     return stmt.get(id) as QuoteComplete | undefined;
   }
@@ -250,6 +268,7 @@ export class QuoteRepository {
    * Get all complete quotes
    */
   getAllComplete(filter?: QuoteFilter): QuoteComplete[] {
+    this.expireOverdue();
     let sql = 'SELECT * FROM v_quotes_complete WHERE 1=1';
     const params: any[] = [];
 
@@ -359,6 +378,7 @@ export class QuoteRepository {
    * Count quotes
    */
   count(filter?: QuoteFilter): number {
+    this.expireOverdue();
     let sql = 'SELECT COUNT(*) as count FROM v_quotes_complete WHERE 1=1';
     const params: any[] = [];
 

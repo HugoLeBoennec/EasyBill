@@ -50,6 +50,13 @@ export interface PDFGenerationOptions {
 
   // Language for labels
   language?: 'fr' | 'en';
+
+  // 'quote' prints a plain "DEVIS" (no Factur-X XML, no PDF/A claims) with a
+  // validity date and a signature block. Default: 'invoice'.
+  documentKind?: 'invoice' | 'quote';
+
+  // Quote only: last day of validity (YYYY-MM-DD)
+  validUntil?: string;
 }
 
 /** Result of a generation with layout information (used by the tests). */
@@ -103,6 +110,13 @@ interface Labels {
   page: (n: number, total: number) => string;
   continued: string;
   subject: string;
+  quoteTitle: string;
+  quoteSubject: string;
+  validUntil: string;
+  acceptance: string;
+  acceptanceHint: string;
+  signatureDate: string;
+  signatureField: string;
 }
 
 const LABELS: Record<'fr' | 'en', Labels> = {
@@ -163,6 +177,13 @@ const LABELS: Record<'fr' | 'en', Labels> = {
     page: (n, total) => `Page ${n} / ${total}`,
     continued: 'suite',
     subject: 'Facture électronique',
+    quoteTitle: 'DEVIS',
+    quoteSubject: 'Devis',
+    validUntil: "Valable jusqu'au",
+    acceptance: 'Bon pour accord',
+    acceptanceHint: 'Date et signature du client, précédées de la mention « Bon pour accord »',
+    signatureDate: 'Date :',
+    signatureField: 'Signature :',
   },
   en: {
     titles: {
@@ -221,6 +242,13 @@ const LABELS: Record<'fr' | 'en', Labels> = {
     page: (n, total) => `Page ${n} / ${total}`,
     continued: 'continued',
     subject: 'Electronic invoice',
+    quoteTitle: 'QUOTE',
+    quoteSubject: 'Quote',
+    validUntil: 'Valid until',
+    acceptance: 'Accepted and agreed',
+    acceptanceHint: 'Customer date and signature, preceded by "Accepted and agreed"',
+    signatureDate: 'Date:',
+    signatureField: 'Signature:',
   },
 };
 
@@ -254,6 +282,9 @@ const COL_AMOUNT_RIGHT = RIGHT - 6;
 const ROW_LINE_HEIGHT = 11;
 const ROW_PADDING = 5;
 const TABLE_HEADER_HEIGHT = 20;
+
+/** Height of the quote signature block (see drawSignature) */
+const SIGNATURE_HEIGHT = 112;
 
 const BLACK = rgb(0, 0, 0);
 const GREY = rgb(0.4, 0.4, 0.4);
@@ -412,15 +443,22 @@ export class PDFGenerator {
     invoice: Invoice,
     options?: PDFGenerationOptions
   ): Promise<PDFGenerationReport> {
-    // Factur-X XML (throws when the invoice data is invalid)
-    const xml = facturXGenerator.generate(invoice, {
-      format: 'facturx',
-      facturxProfile: 'EN16931',
-      prettyPrint: true,
-    });
+    const isQuote = options?.documentKind === 'quote';
+    // Factur-X XML (throws when the invoice data is invalid); none for a quote
+    const xml = isQuote
+      ? ''
+      : facturXGenerator.generate(invoice, {
+          format: 'facturx',
+          facturxProfile: 'EN16931',
+          prettyPrint: true,
+        });
 
     const language = options?.language || 'fr';
-    const labels = LABELS[language];
+    const baseLabels = LABELS[language];
+    // A quote reuses every label but is titled "DEVIS", whatever the type code
+    const labels: Labels = isQuote
+      ? { ...baseLabels, titles: {}, defaultTitle: baseLabels.quoteTitle, subject: baseLabels.quoteSubject }
+      : baseLabels;
     const now = new Date();
     now.setMilliseconds(0);
 
@@ -436,7 +474,7 @@ export class PDFGenerator {
     // Metadata: Info dictionary and XMP carry the same values
     const title = canvas.clean(`${this.documentTitle(invoice, labels)} ${invoice.id}`);
     const author = invoice.accountingSupplierParty.partyLegalEntity.registrationName;
-    const keywords = ['Factur-X', 'EN 16931', invoice.id].join(', ');
+    const keywords = (isQuote ? [labels.quoteSubject, invoice.id] : ['Factur-X', 'EN 16931', invoice.id]).join(', ');
     const creatorTool = 'EasyBill';
     const producer = 'EasyBill (pdf-lib)';
 
@@ -449,6 +487,11 @@ export class PDFGenerator {
     pdfDoc.setCreationDate(now);
     pdfDoc.setModificationDate(now);
     pdfDoc.setLanguage(language === 'fr' ? 'fr-FR' : 'en');
+
+    if (isQuote) {
+      const bytes = await pdfDoc.save({ useObjectStreams: false });
+      return { bytes, pageCount: canvas.pages.length, textByPage: canvas.textByPage };
+    }
 
     setXmpMetadata(
       pdfDoc,
@@ -476,6 +519,14 @@ export class PDFGenerator {
     return { bytes, pageCount: canvas.pages.length, textByPage: canvas.textByPage };
   }
 
+  /** Plain (non Factur-X) quote PDF: same pages and drawing code as an invoice. */
+  public async generateQuote(
+    quote: Invoice,
+    options?: Omit<PDFGenerationOptions, 'documentKind'>
+  ): Promise<Uint8Array> {
+    return (await this.generateWithReport(quote, { ...options, documentKind: 'quote' })).bytes;
+  }
+
   private toColor(color: { r: number; g: number; b: number } | undefined, fallback: { r: number; g: number; b: number }): RGB {
     const c = color ?? fallback;
     const clamp = (v: number) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
@@ -501,6 +552,7 @@ export class PDFGenerator {
     labels: Labels,
     options?: PDFGenerationOptions
   ): Canvas {
+    const isQuote = options?.documentKind === 'quote';
     const primary = this.toColor(options?.primaryColor, this.defaultPrimaryColor);
     const secondary = this.toColor(options?.secondaryColor, this.defaultSecondaryColor);
 
@@ -524,15 +576,16 @@ export class PDFGenerator {
 
     const canvas = new Canvas(pdfDoc, regular, bold, bottom);
 
-    this.drawHeader(canvas, invoice, labels, primary);
+    this.drawHeader(canvas, invoice, labels, primary, isQuote ? options?.validUntil : undefined);
     this.drawParties(canvas, invoice, labels);
     this.drawNotes(canvas, invoice, labels);
     if (options?.includeLineItems !== false) {
       this.drawLineItems(canvas, invoice, labels, secondary);
     }
-    this.drawTotals(canvas, invoice, labels, primary);
+    this.drawTotals(canvas, invoice, labels, primary, isQuote ? SIGNATURE_HEIGHT : 0);
     this.drawVatMentions(canvas, invoice);
     this.drawPaymentAndLegalMentions(canvas, invoice, labels);
+    if (isQuote) this.drawSignature(canvas, labels);
 
     // Running title, footer and page numbers once the page count is known
     const total = canvas.pages.length;
@@ -567,7 +620,7 @@ export class PDFGenerator {
   /**
    * Title, number, dates and references
    */
-  private drawHeader(canvas: Canvas, invoice: Invoice, labels: Labels, color: RGB): void {
+  private drawHeader(canvas: Canvas, invoice: Invoice, labels: Labels, color: RGB, validUntil?: string): void {
     const title = this.documentTitle(invoice, labels);
     const titleSize = canvas.width(title, 26, true) > 260 ? 18 : 26;
     canvas.textAt(title, MARGIN, canvas.y - 24, { size: titleSize, font: canvas.bold, color });
@@ -581,6 +634,9 @@ export class PDFGenerator {
     push(`${labels.date} : ${formatDateFR(invoice.issueDate)}`, 10);
     if (invoice.dueDate) {
       push(`${labels.dueDate} : ${formatDateFR(invoice.dueDate)}`, 10);
+    }
+    if (validUntil) {
+      push(`${labels.validUntil} ${formatDateFR(validUntil)}`, 10, true);
     }
     (invoice.invoiceDocumentReference || []).forEach((ref) => {
       if (ref.id) push(labels.creditedInvoice(ref.id, formatDateFR(ref.issueDate)), 10, true);
@@ -824,7 +880,7 @@ export class PDFGenerator {
   /**
    * Totals block (never split over two pages)
    */
-  private drawTotals(canvas: Canvas, invoice: Invoice, labels: Labels, color: RGB): void {
+  private drawTotals(canvas: Canvas, invoice: Invoice, labels: Labels, color: RGB, reserve = 0): void {
     const totals = invoice.legalMonetaryTotal;
     const currency = invoice.documentCurrencyCode;
     const money = (v: number) => formatAmountFR(v, currency);
@@ -876,7 +932,7 @@ export class PDFGenerator {
     const highlightHeight = 24;
     const height = rows.reduce((sum, r) => sum + (r.highlight ? highlightHeight + 6 : rowHeight), 0);
 
-    canvas.ensure(height + 6);
+    canvas.ensure(height + 6 + reserve);
     for (const row of rows) {
       if (row.highlight) {
         canvas.y -= 3;
@@ -908,6 +964,40 @@ export class PDFGenerator {
     canvas.ensure(Canvas.height(lines));
     canvas.lines(lines, MARGIN);
     canvas.y -= 10;
+  }
+
+  /**
+   * Quote acceptance block: "Bon pour accord", date and signature boxes.
+   * Never split over two pages; the totals reserve room for it so that both
+   * stay on the same page.
+   */
+  private drawSignature(canvas: Canvas, labels: Labels): void {
+    canvas.y -= 10;
+    canvas.ensure(SIGNATURE_HEIGHT);
+    const top = canvas.y;
+    canvas.textAt(labels.acceptance, MARGIN, top - 11, { size: 11, font: canvas.bold });
+    canvas.textAt(labels.acceptanceHint, MARGIN, top - 24, { size: 8, color: GREY });
+
+    const boxTop = top - 32;
+    const boxHeight = SIGNATURE_HEIGHT - 42;
+    const gap = 14;
+    const dateWidth = 150;
+    const boxes = [
+      { x: MARGIN, width: dateWidth, label: labels.signatureDate },
+      { x: MARGIN + dateWidth + gap, width: CONTENT_WIDTH - dateWidth - gap, label: labels.signatureField },
+    ];
+    for (const box of boxes) {
+      canvas.page.drawRectangle({
+        x: box.x,
+        y: boxTop - boxHeight,
+        width: box.width,
+        height: boxHeight,
+        borderColor: GREY,
+        borderWidth: 0.7,
+      });
+      canvas.textAt(box.label, box.x + 6, boxTop - 12, { size: 8, color: GREY });
+    }
+    canvas.y = boxTop - boxHeight - 6;
   }
 
   /**

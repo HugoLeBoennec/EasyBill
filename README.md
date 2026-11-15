@@ -79,7 +79,7 @@ If you encounter issues or have suggestions, please open an issue on GitHub!
 
 ✅ **E-Invoicing groundwork (French compliance)**
 - Factur-X, UBL, and CII format generation
-- Platform settings storage (platform, environment, credentials)
+- Platform settings storage (platform, environment, credentials); client ID and secret are encrypted with Electron `safeStorage` in the main process (never kept in the renderer) and are refused if the OS keyring is unavailable
 - Local queue table for invoices awaiting transmission
 - Nothing is sent to any platform yet
 
@@ -220,7 +220,6 @@ Contributions are welcome! This project is developed with the help of AI (Claude
 
 - **Database migrations**: Back up the database (Settings → Sauvegarde) before updates
 - **E-invoicing**: Invoices are not transmitted to Chorus Pro or any other platform; only format generation, settings, and a local queue exist
-- **Credentials**: E-invoicing platform credentials are stored unencrypted in the app's local storage
 - **Company profile**: Share capital, RCS, APE/NAF code, IBAN/BIC and the VAT franchise mention cannot be stored yet
 - **Performance**: Large invoice databases (>10,000) may experience slowdown
 - **Testing**: Test coverage is currently limited

@@ -541,6 +541,26 @@ describe('statistics with credit notes', () => {
     expect(repo.countSent()).toBe(2);
   });
 
+  it('counts finalized (not yet marked as sent) invoices as awaiting or overdue', () => {
+    const finalizedOverdue = issueInvoice(-60, LINES, false);
+    const finalized = issueInvoice(-10, LINES, false);
+
+    expect(repo.getFinancialMetrics(30)).toMatchObject({
+      amount_awaiting_payment: TOTAL,
+      awaiting_count: 1,
+      overdue_amount: TOTAL,
+      overdue_count: 1,
+    });
+
+    pay(finalized, 4000);
+    expect(repo.getFinancialMetrics(30)).toMatchObject({
+      amount_awaiting_payment: TOTAL - 4000,
+      awaiting_count: 1,
+    });
+    pay(finalizedOverdue, TOTAL);
+    expect(repo.getFinancialMetrics(30)).toMatchObject({ overdue_amount: 0, overdue_count: 0 });
+  });
+
   it('filters the list by document type', () => {
     const invoiceId = issueInvoice();
     const creditNoteId = repo.createCreditNote(invoiceId);

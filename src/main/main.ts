@@ -8,6 +8,8 @@
  * When running `npm run build` or `npm run build:main`, this file is compiled to
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
+// Must stay the first import: it redirects the data folder for the CI smoke test
+import { isSmokeTest, runSmokeTest } from './smoke-test';
 import path from 'path';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
@@ -30,6 +32,7 @@ export default class AppUpdater {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
 
 ipcMain.on('ipc-example', async (event, arg) => {
   const msgTemplate = (pingPong: string) => `IPC test: ${pingPong}`;
@@ -64,6 +67,10 @@ const createWindow = async () => {
     },
   });
 
+  if (isSmokeTest) {
+    runSmokeTest(mainWindow);
+  }
+
   mainWindow.loadURL(resolveHtmlPath('index.html'));
 
   mainWindow.on('ready-to-show', () => {
@@ -91,8 +98,10 @@ const createWindow = async () => {
   });
 
   // Remove this if your app does not use auto updates
-  // eslint-disable-next-line
-  new AppUpdater();
+  if (!isSmokeTest) {
+    // eslint-disable-next-line
+    new AppUpdater();
+  }
 };
 
 /**
@@ -125,4 +134,8 @@ app
       if (mainWindow === null) createWindow();
     });
   })
-  .catch(console.log);
+  .catch((error) => {
+    console.log(error);
+    // A startup failure must fail the CI smoke test instead of hanging it
+    if (isSmokeTest) app.exit(1);
+  });

@@ -37,3 +37,36 @@ jobs:
 
       - name: Package
         run: npm run package
+
+      # Launches the packaged app once: window renders, preload bridge and
+      # database (schema + migrations) work with the native module as shipped.
+      - name: Startup smoke test (Linux)
+        if: runner.os == 'Linux'
+        env:
+          EASYBILL_SMOKE_TEST: '1'
+        run: |
+          BIN=$(find out -maxdepth 2 -type f -iname easybill | head -n 1)
+          echo "Launching $BIN"
+          xvfb-run -a "$BIN" --no-sandbox
+
+      - name: Startup smoke test (macOS)
+        if: runner.os == 'macOS'
+        env:
+          EASYBILL_SMOKE_TEST: '1'
+        run: |
+          BIN=$(find out -type f -path '*.app/Contents/MacOS/*' | head -n 1)
+          echo "Launching $BIN"
+          "$BIN"
+
+      - name: Startup smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          EASYBILL_SMOKE_TEST: '1'
+          EASYBILL_SMOKE_RESULT: ${{ runner.temp }}\easybill-smoke.txt
+        run: |
+          $bin = Get-ChildItem -Path out -Recurse -Filter EasyBill.exe | Select-Object -First 1
+          Write-Host "Launching $($bin.FullName)"
+          $process = Start-Process -FilePath $bin.FullName -Wait -PassThru
+          if (Test-Path $env:EASYBILL_SMOKE_RESULT) { Get-Content $env:EASYBILL_SMOKE_RESULT }
+          exit $process.ExitCode

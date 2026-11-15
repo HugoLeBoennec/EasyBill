@@ -66,7 +66,9 @@ const Customers = () => {
     try {
       if (editingId) {
         // Update
-        const response = await window.electron.party.update(editingId, formData);
+        // The form holds the whole stored row: id and timestamps are not writable
+        const { id: _id, created_at: _created, updated_at: _updated, ...updates } = formData;
+        const response = await window.electron.party.update(editingId, updates);
         if (!response.success) {
           setError(response.error || 'Failed to update customer');
           return;

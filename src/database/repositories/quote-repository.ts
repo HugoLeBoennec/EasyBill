@@ -316,6 +316,19 @@ export class QuoteRepository {
    * Update quote
    */
   update(id: number, updates: UpdateRecord<Quote>): boolean {
+    // Extending the validity of an expired quote to today or later revives it
+    // as a draft (unless the caller sets a status explicitly); otherwise the
+    // next listing would keep it expired for good.
+    if (updates.valid_until && updates.status === undefined) {
+      const current = this.findById(id);
+      if (
+        current?.status === 'expired' &&
+        updates.valid_until.slice(0, 10) >= localDate()
+      ) {
+        updates = { ...updates, status: 'draft', sent_at: undefined, accepted_at: undefined };
+      }
+    }
+
     const { clause, params } = buildSetClause(
       updates as Record<string, unknown>,
       QUOTE_UPDATABLE_COLUMNS
@@ -602,6 +615,19 @@ export class QuoteRepository {
       if (existing.status === 'converted') {
         throw new Error(
           'Ce devis a été converti en facture : son statut ne peut plus changer'
+        );
+      }
+
+      // An expired quote whose date is still in the past would be expired again
+      // by the next listing: ask for a new validity date instead of flipping back.
+      if (
+        existing.status === 'expired' &&
+        (status === 'draft' || status === 'sent') &&
+        !!existing.valid_until &&
+        existing.valid_until.slice(0, 10) < localDate()
+      ) {
+        throw new Error(
+          'La date de validité est dépassée : prolongez-la (Modifier) pour remettre ce devis en brouillon ou l’envoyer'
         );
       }
 

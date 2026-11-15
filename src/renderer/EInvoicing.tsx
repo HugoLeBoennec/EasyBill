@@ -1,4 +1,5 @@
-import { useContext, useState, useEffect } from 'react';
+import { useContext, useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { LocaleContext } from './LocaleContext';
 import { InputText } from './components/inputs';
 import fr from './locales/fr';
@@ -26,8 +27,7 @@ const EInvoicing = () => {
   const [settings, setSettings] = useState<PublicEInvoicingSettings>(DEFAULT_PUBLIC_SETTINGS);
   const [clientIdInput, setClientIdInput] = useState('');
   const [clientSecretInput, setClientSecretInput] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null);
+  const [testResult, setTestResult] = useState<'unavailable' | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -45,7 +45,14 @@ const EInvoicing = () => {
       }
       const loaded = await loadSettings();
       if (cancelled) return;
-      setSettings(loaded);
+      // A first-time user has no stored endpoint: start from the platform default
+      // (the auto-populate effect below does not re-run after this load).
+      const endpoint =
+        loaded.apiEndpoint ||
+        (loaded.platform !== 'other'
+          ? settingsStore.getDefaultEndpoint(loaded.platform, loaded.environment)
+          : '');
+      setSettings({ ...loaded, apiEndpoint: endpoint });
       if (migrationError) setValidationErrors([migrationError]);
     })();
     return () => {
@@ -66,16 +73,14 @@ const EInvoicing = () => {
     }
   }, [settings.platform, settings.environment]);
 
-  const handleTestConnection = async () => {
-    setTesting(true);
-    setTestResult(null);
-
-    // Simulate API test (replace with actual implementation)
-    setTimeout(() => {
-      setTesting(false);
-      setTestResult('success'); // or 'failed'
-    }, 2000);
+  // No platform client exists yet: say so instead of pretending the credentials work.
+  const handleTestConnection = () => {
+    setTestResult('unavailable');
   };
+
+  // The page scrolls inside the app layout: bring validation / success messages into view
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const showFeedback = () => titleRef.current?.scrollIntoView({ block: 'start' });
 
   const handleSave = async () => {
     // Clear previous errors and success message
@@ -89,6 +94,7 @@ const EInvoicing = () => {
 
     if (!validation.valid) {
       setValidationErrors(validation.errors);
+      showFeedback();
       return;
     }
 
@@ -96,12 +102,14 @@ const EInvoicing = () => {
     const result = await persistSettings(input);
     if (!result.ok) {
       setValidationErrors([result.message]);
+      showFeedback();
       return;
     }
     setSettings(result.settings);
     setClientIdInput('');
     setClientSecretInput('');
     setSaveSuccess(true);
+    showFeedback();
 
     // Hide success message after 3 seconds
     setTimeout(() => {
@@ -120,7 +128,10 @@ const EInvoicing = () => {
   return (
     <div className="flex flex-col text-black max-w-4xl mx-auto p-6">
       {/* Title */}
-      <h1 className="text-3xl font-bold mb-2">{t.title}</h1>
+      <Link to="/setting" className="self-start text-sm text-blue-600 hover:underline mb-1">
+        {t.back}
+      </Link>
+      <h1 ref={titleRef} className="text-3xl font-bold mb-2">{t.title}</h1>
 
       {/* Compliance Warning Banner */}
       <div className="mb-6 p-4 bg-yellow-50 border-l-4 border-yellow-400 rounded">
@@ -249,7 +260,7 @@ const EInvoicing = () => {
                       {t.chorusPro}
                     </span>
                     <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 rounded">
-                      FREE
+                      {t.badgeFree}
                     </span>
                   </div>
                   <p className="text-sm text-gray-500">{t.chorusProDesc}</p>
@@ -422,27 +433,15 @@ const EInvoicing = () => {
               <button
                 type="button"
                 onClick={handleTestConnection}
-                disabled={testing}
-                className={`w-full py-2 px-4 rounded-md font-medium transition-colors ${
-                  testing
-                    ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                }`}
+                className="w-full py-2 px-4 rounded-md font-medium transition-colors bg-blue-600 text-white hover:bg-blue-700"
               >
-                {testing ? t.testing : t.testConnection}
+                {t.testConnection}
               </button>
 
               {/* Test Result */}
-              {testResult && (
-                <div
-                  className={`p-3 rounded-md ${
-                    testResult === 'success'
-                      ? 'bg-green-50 text-green-800'
-                      : 'bg-red-50 text-red-800'
-                  }`}
-                >
-                  {testResult === 'success' ? '✓ ' : '✗ '}
-                  {testResult === 'success' ? t.testSuccess : t.testFailed}
+              {testResult === 'unavailable' && (
+                <div className="p-3 rounded-md bg-yellow-50 text-yellow-800">
+                  {t.testUnavailable}
                 </div>
               )}
             </div>
@@ -469,7 +468,7 @@ const EInvoicing = () => {
                       {t.facturx}
                     </span>
                     <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded">
-                      RECOMMENDED
+                      {t.badgeRecommended}
                     </span>
                   </div>
                   <p className="text-sm text-gray-500">{t.facturxDesc}</p>

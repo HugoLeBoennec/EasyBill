@@ -15,6 +15,7 @@ import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath, getAssetPath } from './util';
 import { initializeIPC, closeDatabase } from './ipc-handlers';
+import { isSmokeTest, prepareSmokeTest, runSmokeTest } from './smoke-test';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
 if (require('electron-squirrel-startup')) {
@@ -30,6 +31,11 @@ export default class AppUpdater {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
+// CI startup check of the packaged app: runs on a throwaway data folder
+if (isSmokeTest) {
+  prepareSmokeTest();
+}
 
 ipcMain.on('ipc-example', async (event, arg) => {
   const msgTemplate = (pingPong: string) => `IPC test: ${pingPong}`;
@@ -64,6 +70,10 @@ const createWindow = async () => {
     },
   });
 
+  if (isSmokeTest) {
+    runSmokeTest(mainWindow);
+  }
+
   mainWindow.loadURL(resolveHtmlPath('index.html'));
 
   mainWindow.on('ready-to-show', () => {
@@ -91,8 +101,10 @@ const createWindow = async () => {
   });
 
   // Remove this if your app does not use auto updates
-  // eslint-disable-next-line
-  new AppUpdater();
+  if (!isSmokeTest) {
+    // eslint-disable-next-line
+    new AppUpdater();
+  }
 };
 
 /**
@@ -125,4 +137,8 @@ app
       if (mainWindow === null) createWindow();
     });
   })
-  .catch(console.log);
+  .catch((error) => {
+    console.log(error);
+    // A startup failure must fail the CI smoke test instead of hanging it
+    if (isSmokeTest) app.exit(1);
+  });

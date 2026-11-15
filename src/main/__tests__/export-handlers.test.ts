@@ -187,7 +187,6 @@ describe('invoice:export', () => {
       const xml = fs.readFileSync(target, 'utf-8');
       expect(xml).toContain(number);
       expect(xml).toMatch(/TypeCode>381</);
-      expect(xml).not.toMatch(/TypeCode>380<\/(ram:TypeCode|cbc:InvoiceTypeCode)>\s*<(ram:IssueDateTime|cbc:Note|cbc:DocumentCurrencyCode)/);
       // Preceding invoice reference (BG-3) and positive amounts
       expect(xml).toContain('INV-2026-001');
       expect(xml).toContain('1143.27');

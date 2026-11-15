@@ -3,21 +3,32 @@
  *
  * - /invoices/new  : create a draft
  * - /invoices/:id  : edit a draft, or display an issued invoice read-only
- *   (an issued invoice can no longer be modified) with its export buttons.
+ *   (an issued invoice can no longer be modified) with its export buttons,
+ *   its payments and its credit notes.
+ *
+ * The same form handles credit notes (avoirs): a credit note is created from
+ * an issued invoice, keeps its customer and can only be reduced (quantities /
+ * lines) before being issued.
  */
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { Invoice, InvoicePayment } from '../database/types';
 import {
+  balanceDue,
   computeInvoiceTotals,
   computeLineAmounts,
+  creditableAmount,
   eurosToCents,
+  overpaidAmount,
 } from '../database/repositories/invoice-repository';
 import {
   FeedbackBanner,
   InvoiceExportButtons,
+  PAYMENT_METHOD_LABELS,
+  PaymentForm,
   StatusBadge,
+  TypeBadge,
   displayInvoiceNumber,
   formatAmount,
   formatDate,
@@ -95,15 +106,41 @@ const centsToInput = (cents: number): string => (cents / 100).toFixed(2);
 let lineKeyCounter = 0;
 const newLineKey = (): string => `line-${Date.now()}-${lineKeyCounter++}`;
 
-const emptyLine = (): LineItem => ({
+const DEFAULT_VAT_RATE = 20;
+
+const emptyLine = (vatRate: number = DEFAULT_VAT_RATE): LineItem => ({
   key: newLineKey(),
   item_name: '',
   item_description: '',
   quantity: '1',
   unit_price: '',
-  vat_rate: 20,
+  vat_rate: vatRate,
   unit_code: 'C62',
 });
+
+/**
+ * Company settings that shape a new invoice. Read defensively: the columns
+ * (VAT franchise flag, default payment terms) may not exist on older databases.
+ */
+const loadCompanyDefaults = async (): Promise<{ vatRate: number; paymentTerms: number | null }> => {
+  try {
+    const response = await window.electron.party.getCompany();
+    const company = (response.success ? response.data : null) as
+      | { vat_franchise?: unknown; default_payment_terms_days?: unknown }
+      | null
+      | undefined;
+    const franchise = Boolean(company && Number(company.vat_franchise));
+    const terms = company?.default_payment_terms_days;
+    return {
+      // VAT franchise (art. 293 B du CGI): lines are issued without VAT
+      vatRate: franchise ? 0 : DEFAULT_VAT_RATE,
+      paymentTerms:
+        typeof terms === 'number' && Number.isInteger(terms) && terms >= 0 ? terms : null,
+    };
+  } catch {
+    return { vatRate: DEFAULT_VAT_RATE, paymentTerms: null };
+  }
+};
 
 const inputClass = (hasError?: boolean, small = false): string =>
   `w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-700 ${
@@ -131,6 +168,14 @@ const InvoiceForm = () => {
   // Existing invoice (edit / read-only)
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [payments, setPayments] = useState<InvoicePayment[]>([]);
+  // Credit notes of this invoice / original invoice of this credit note
+  const [creditNotes, setCreditNotes] = useState<Invoice[]>([]);
+  const [originalInvoice, setOriginalInvoice] = useState<Invoice | null>(null);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [confirmDeletePayment, setConfirmDeletePayment] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  // VAT rate of new lines (0 when the company is under the VAT franchise)
+  const [defaultVatRate, setDefaultVatRate] = useState(DEFAULT_VAT_RATE);
 
   // Form fields
   const [invoiceDate, setInvoiceDate] = useState(todayLocal());
@@ -143,19 +188,22 @@ const InvoiceForm = () => {
   const topRef = useRef<HTMLDivElement>(null);
 
   const readOnly = isEdit && invoice !== null && invoice.status !== 'draft';
+  const creditNote = invoice?.invoice_type === 'credit_note';
 
   // ---------------------------------------------------------------- loading
 
   useEffect(() => {
     let cancelled = false;
 
-    const resetForCreation = () => {
+    const resetForCreation = (terms: number) => {
       const today = todayLocal();
       setInvoice(null);
       setPayments([]);
+      setCreditNotes([]);
+      setOriginalInvoice(null);
       setInvoiceDate(today);
-      setPaymentTerms('30');
-      setDueDate(addDays(today, 30));
+      setPaymentTerms(String(terms));
+      setDueDate(addDays(today, terms));
       setCustomerId('');
       setNotes('');
       setLineItems([]);
@@ -181,7 +229,13 @@ const InvoiceForm = () => {
       setFeedback(null);
       setErrors(NO_ERRORS);
       setConfirmFinalize(false);
+      setShowPaymentForm(false);
+      setConfirmDeletePayment(null);
       setLoadingCustomers(true);
+
+      const companyDefaults = await loadCompanyDefaults();
+      if (cancelled) return;
+      setDefaultVatRate(companyDefaults.vatRate);
 
       let customerList: Customer[] = [];
       try {
@@ -199,7 +253,7 @@ const InvoiceForm = () => {
       if (invoiceId === null) {
         setCustomers(customerList);
         setLoadingCustomers(false);
-        resetForCreation();
+        resetForCreation(companyDefaults.paymentTerms ?? 30);
         return;
       }
 
@@ -236,9 +290,22 @@ const InvoiceForm = () => {
         }
 
         let loadedPayments: InvoicePayment[] = [];
-        if (loaded.status === 'paid' || (loaded.paid_amount || 0) > 0) {
-          const paymentsResp = await window.electron.invoice.getPayments(invoiceId);
+        let loadedCreditNotes: Invoice[] = [];
+        let loadedOriginal: Invoice | null = null;
+        if (loaded.invoice_type === 'credit_note') {
+          if (loaded.credited_invoice_id) {
+            const originalResp = await window.electron.invoice.get(loaded.credited_invoice_id);
+            if (originalResp.success && originalResp.data) loadedOriginal = originalResp.data;
+          }
+        } else if (loaded.status !== 'draft') {
+          const [paymentsResp, creditNotesResp] = await Promise.all([
+            window.electron.invoice.getPayments(invoiceId),
+            window.electron.invoice.getCreditNotes(invoiceId),
+          ]);
           if (paymentsResp.success && paymentsResp.data) loadedPayments = paymentsResp.data;
+          if (creditNotesResp.success && creditNotesResp.data) {
+            loadedCreditNotes = creditNotesResp.data;
+          }
         }
         if (cancelled) return;
 
@@ -247,6 +314,8 @@ const InvoiceForm = () => {
         setCustomers(customerList);
         setInvoice(loaded);
         setPayments(loadedPayments);
+        setCreditNotes(loadedCreditNotes);
+        setOriginalInvoice(loadedOriginal);
         setInvoiceDate(date);
         setDueDate(due);
         setPaymentTerms(
@@ -310,7 +379,7 @@ const InvoiceForm = () => {
   };
 
   const addLineItem = () => {
-    setLineItems((items) => [...items, emptyLine()]);
+    setLineItems((items) => [...items, emptyLine(defaultVatRate)]);
     setErrors((current) => ({ ...current, lines: undefined }));
   };
 
@@ -342,14 +411,26 @@ const InvoiceForm = () => {
     const result: FormErrors = { lineItems: {} };
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) {
-      result.invoiceDate = 'La date de facture est obligatoire.';
+      result.invoiceDate = creditNote
+        ? "La date de l'avoir est obligatoire."
+        : 'La date de facture est obligatoire.';
+    } else if (
+      creditNote &&
+      originalInvoice &&
+      invoiceDate < originalInvoice.invoice_date.slice(0, 10)
+    ) {
+      result.invoiceDate = `La date de l'avoir ne peut pas précéder celle de la facture d'origine (${formatDate(
+        originalInvoice.invoice_date
+      )}).`;
     }
-    if (dueDate && invoiceDate && dueDate < invoiceDate) {
-      result.dueDate = "La date d'échéance ne peut pas précéder la date de facture.";
-    }
-    const terms = Number(paymentTerms);
-    if (paymentTerms.trim() === '' || !Number.isInteger(terms) || terms < 0) {
-      result.paymentTerms = 'Indiquez un nombre de jours entier, positif ou nul.';
+    if (!creditNote) {
+      if (dueDate && invoiceDate && dueDate < invoiceDate) {
+        result.dueDate = "La date d'échéance ne peut pas précéder la date de facture.";
+      }
+      const terms = Number(paymentTerms);
+      if (paymentTerms.trim() === '' || !Number.isInteger(terms) || terms < 0) {
+        result.paymentTerms = 'Indiquez un nombre de jours entier, positif ou nul.';
+      }
     }
     if (!customerId) {
       result.customer = 'Veuillez sélectionner un client.';
@@ -401,10 +482,10 @@ const InvoiceForm = () => {
       invoiceId,
       {
         invoice_date: invoiceDate,
-        due_date: dueDate || null,
+        due_date: creditNote ? null : dueDate || null,
         buyer_id: customerId as number,
         seller_id: invoice?.seller_id ?? null,
-        payment_terms_days: Number(paymentTerms),
+        payment_terms_days: creditNote ? 0 : Number(paymentTerms),
         notes: notes.trim() || null,
         buyer_reference: invoice?.buyer_reference ?? null,
         purchase_order_ref: invoice?.purchase_order_ref ?? null,
@@ -425,7 +506,11 @@ const InvoiceForm = () => {
     if (!response.success || !response.data) {
       setFeedback({
         type: 'error',
-        message: response.error || "L'enregistrement de la facture a échoué.",
+        message:
+          response.error ||
+          (creditNote
+            ? "L'enregistrement de l'avoir a échoué."
+            : "L'enregistrement de la facture a échoué."),
       });
       topRef.current?.scrollIntoView({ behavior: 'smooth' });
       return null;
@@ -466,7 +551,9 @@ const InvoiceForm = () => {
           type: 'error',
           message:
             (response.error || 'La finalisation a échoué.') +
-            '\nLa facture a été enregistrée comme brouillon.',
+            (creditNote
+              ? "\nL'avoir a été enregistré comme brouillon."
+              : '\nLa facture a été enregistrée comme brouillon.'),
         });
         // The draft now exists: continue on its own page
         if (invoiceId === null) navigate(`/invoices/${savedId}`, { replace: true });
@@ -476,7 +563,12 @@ const InvoiceForm = () => {
       if (invoiceId === savedId) {
         const refreshed = await window.electron.invoice.get(savedId);
         if (refreshed.success && refreshed.data) setInvoice(refreshed.data);
-        setFeedback({ type: 'success', message: 'Facture finalisée.' });
+        setFeedback({
+          type: 'success',
+          message: creditNote
+            ? "Avoir émis : le solde de la facture d'origine a été mis à jour."
+            : 'Facture finalisée.',
+        });
       } else {
         navigate(`/invoices/${savedId}`, { replace: true });
       }
@@ -492,6 +584,100 @@ const InvoiceForm = () => {
 
   const handleCancel = () => {
     navigate('/invoices');
+  };
+
+  // ------------------------------------------- payments and credit notes
+
+  /** Reload what evolves on an issued invoice: settlement state, payments, credit notes. */
+  const refreshIssued = async () => {
+    if (invoiceId === null) return;
+    const [invoiceResp, paymentsResp, creditNotesResp] = await Promise.all([
+      window.electron.invoice.get(invoiceId),
+      window.electron.invoice.getPayments(invoiceId),
+      window.electron.invoice.getCreditNotes(invoiceId),
+    ]);
+    if (invoiceResp.success && invoiceResp.data) setInvoice(invoiceResp.data);
+    if (paymentsResp.success && paymentsResp.data) setPayments(paymentsResp.data);
+    if (creditNotesResp.success && creditNotesResp.data) setCreditNotes(creditNotesResp.data);
+  };
+
+  const handlePaymentRecorded = async (amount: number) => {
+    setShowPaymentForm(false);
+    await refreshIssued();
+    setFeedback({ type: 'success', message: `Paiement de ${formatAmount(amount)} enregistré.` });
+  };
+
+  const handleDeletePayment = async (paymentId: number) => {
+    setBusy(true);
+    setConfirmDeletePayment(null);
+    setFeedback(null);
+    try {
+      const response = await window.electron.invoice.deletePayment(paymentId);
+      await refreshIssued();
+      setFeedback(
+        response.success
+          ? { type: 'success', message: 'Paiement supprimé : le solde de la facture a été rétabli.' }
+          : { type: 'error', message: response.error || 'La suppression du paiement a échoué.' }
+      );
+    } catch (err: unknown) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'La suppression du paiement a échoué.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleMarkSent = async () => {
+    if (invoiceId === null) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const response = await window.electron.invoice.markSent(invoiceId);
+      const refreshed = await window.electron.invoice.get(invoiceId);
+      if (refreshed.success && refreshed.data) setInvoice(refreshed.data);
+      setFeedback(
+        response.success
+          ? {
+              type: 'success',
+              message: creditNote ? 'Avoir marqué comme envoyé.' : 'Facture marquée comme envoyée.',
+            }
+          : { type: 'error', message: response.error || "L'opération a échoué." }
+      );
+    } catch (err: unknown) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : "L'opération a échoué.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Create (or reopen) the draft credit note of this invoice and open it. */
+  const handleCreateCreditNote = async () => {
+    if (invoiceId === null) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const response = await window.electron.invoice.createCreditNote(invoiceId);
+      if (response.success && response.data) {
+        navigate(`/invoices/${response.data}`);
+      } else {
+        setFeedback({
+          type: 'error',
+          message: response.error || "La création de l'avoir a échoué.",
+        });
+      }
+    } catch (err: unknown) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : "La création de l'avoir a échoué.",
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   // ---------------------------------------------------------------- render
@@ -535,10 +721,26 @@ const InvoiceForm = () => {
   const title = !isEdit
     ? 'Nouvelle facture'
     : readOnly
-    ? `Facture ${invoice?.invoice_number ?? ''}`
+    ? `${creditNote ? 'Avoir' : 'Facture'} ${invoice?.invoice_number ?? ''}`
+    : creditNote
+    ? 'Avoir (brouillon)'
     : 'Modifier le brouillon';
 
   const lastPayment = payments[0];
+
+  // Settlement of an issued invoice
+  const issuedInvoice = readOnly && invoice && !creditNote ? invoice : null;
+  const balance = issuedInvoice ? balanceDue(issuedInvoice) : 0;
+  const overpaid = issuedInvoice ? overpaidAmount(issuedInvoice) : 0;
+  const credited = issuedInvoice?.credited_amount || 0;
+  const canPay = issuedInvoice !== null && issuedInvoice.status !== 'cancelled' && balance > 0;
+  const canCredit = issuedInvoice !== null && creditableAmount(issuedInvoice) > 0;
+  const draftCreditNote = creditNotes.find((cn) => cn.status === 'draft');
+
+  // Draft credit note: what can still be credited on the original invoice
+  const creditLimit =
+    creditNote && !readOnly && originalInvoice ? creditableAmount(originalInvoice) : null;
+  const exceedsCreditLimit = creditLimit !== null && totals.total_amount > creditLimit;
 
   return (
     <div className="p-6" ref={topRef}>
@@ -547,21 +749,224 @@ const InvoiceForm = () => {
         <div>
           <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
             {title}
-            {invoice && <StatusBadge status={invoice.status} />}
+            {invoice && <TypeBadge invoiceType={invoice.invoice_type} />}
+            {invoice && (
+              <StatusBadge
+                status={invoice.status}
+                paymentStatus={invoice.payment_status}
+                invoiceType={invoice.invoice_type}
+              />
+            )}
           </h1>
           <p className="text-gray-600 mt-1">
             {!isEdit && 'Créer une nouvelle facture (brouillon)'}
-            {isEdit && !readOnly && 'Le brouillon reste modifiable tant qu\'il n\'est pas finalisé.'}
+            {isEdit &&
+              !readOnly &&
+              !creditNote &&
+              "Le brouillon reste modifiable tant qu'il n'est pas finalisé."}
+            {isEdit &&
+              !readOnly &&
+              creditNote &&
+              "Par défaut, l'avoir annule toute la facture. Pour un avoir partiel, réduisez les quantités ou supprimez des lignes avant de l'émettre."}
             {readOnly &&
-              "Cette facture a été émise : elle n'est plus modifiable. Pour la corriger, émettez une facture d'avoir."}
+              !creditNote &&
+              "Cette facture a été émise : elle n'est plus modifiable. Pour la corriger ou l'annuler, émettez une facture d'avoir."}
+            {readOnly && creditNote && "Cet avoir a été émis : il n'est plus modifiable."}
           </p>
+          {creditNote && originalInvoice && (
+            <p className="text-gray-800 mt-2">
+              Avoir sur la facture{' '}
+              <Link
+                to={`/invoices/${originalInvoice.id}`}
+                className="text-blue-600 hover:underline font-medium"
+              >
+                {originalInvoice.invoice_number}
+              </Link>{' '}
+              du {formatDate(originalInvoice.invoice_date)} (
+              {formatAmount(originalInvoice.total_amount)} TTC)
+            </p>
+          )}
         </div>
-        {readOnly && invoice?.id !== undefined && invoice.status !== 'cancelled' && (
-          <InvoiceExportButtons invoiceId={invoice.id} onFeedback={setFeedback} variant="button" />
+        {readOnly && invoice?.id !== undefined && (
+          <div className="flex flex-wrap justify-end items-center gap-2">
+            {invoice.status === 'finalized' && (
+              <button
+                type="button"
+                className="px-4 py-2 border border-purple-400 text-purple-700 rounded-lg hover:bg-purple-50 transition-colors disabled:opacity-50"
+                disabled={busy}
+                onClick={handleMarkSent}
+              >
+                {creditNote ? 'Marquer envoyé' : 'Marquer envoyée'}
+              </button>
+            )}
+            {canPay && (
+              <button
+                type="button"
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                disabled={busy || showPaymentForm}
+                onClick={() => setShowPaymentForm(true)}
+              >
+                Enregistrer un paiement
+              </button>
+            )}
+            {canCredit && (
+              <button
+                type="button"
+                className="px-4 py-2 border border-orange-400 text-orange-700 rounded-lg hover:bg-orange-50 transition-colors disabled:opacity-50"
+                disabled={busy}
+                onClick={handleCreateCreditNote}
+              >
+                {draftCreditNote ? "Reprendre l'avoir en brouillon" : 'Créer un avoir'}
+              </button>
+            )}
+            <InvoiceExportButtons invoiceId={invoice.id} onFeedback={setFeedback} variant="button" />
+          </div>
         )}
       </div>
 
       <FeedbackBanner feedback={feedback} onClose={() => setFeedback(null)} />
+
+      {/* Settlement of an issued invoice: balance, payments, credit notes */}
+      {issuedInvoice && (
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Règlement</h2>
+          <dl className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <dt className="text-gray-600">Total TTC</dt>
+              <dd className="text-lg font-semibold text-gray-900">
+                {formatAmount(issuedInvoice.total_amount)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-gray-600">Avoirs émis</dt>
+              <dd className="text-lg font-semibold text-orange-700">
+                {credited > 0 ? `− ${formatAmount(credited)}` : formatAmount(0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-gray-600">Paiements reçus</dt>
+              <dd className="text-lg font-semibold text-green-700">
+                {formatAmount(issuedInvoice.paid_amount || 0)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-gray-600">{overpaid > 0 ? 'À rembourser au client' : 'Reste dû'}</dt>
+              <dd className="text-lg font-bold text-gray-900">
+                {formatAmount(overpaid > 0 ? overpaid : balance)}
+              </dd>
+            </div>
+          </dl>
+          {issuedInvoice.status === 'cancelled' && (
+            <p className="mt-3 text-sm text-red-800 bg-red-50 border border-red-200 rounded px-3 py-2">
+              Cette facture a été intégralement annulée par avoir : plus rien n'est dû.
+            </p>
+          )}
+
+          {showPaymentForm && canPay && (
+            <div className="mt-4">
+              <PaymentForm
+                invoiceId={issuedInvoice.id as number}
+                balance={balance}
+                onRecorded={handlePaymentRecorded}
+                onCancel={() => setShowPaymentForm(false)}
+              />
+            </div>
+          )}
+
+          <h3 className="font-semibold text-gray-900 mt-6 mb-2">Paiements</h3>
+          {payments.length === 0 ? (
+            <p className="text-sm text-gray-500">Aucun paiement enregistré.</p>
+          ) : (
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-gray-500 border-b">
+                  <th className="py-2 pr-4 font-medium">Date</th>
+                  <th className="py-2 pr-4 font-medium">Mode</th>
+                  <th className="py-2 pr-4 font-medium">Référence</th>
+                  <th className="py-2 pr-4 font-medium text-right">Montant</th>
+                  <th className="py-2 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {payments.map((payment) => (
+                  <tr key={payment.id}>
+                    <td className="py-2 pr-4 whitespace-nowrap">{formatDate(payment.payment_date)}</td>
+                    <td className="py-2 pr-4">
+                      {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method}
+                    </td>
+                    <td className="py-2 pr-4 text-gray-600 break-all">
+                      {payment.payment_reference || '-'}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-medium whitespace-nowrap">
+                      {formatAmount(payment.amount)}
+                    </td>
+                    <td className="py-2 text-right whitespace-nowrap">
+                      {confirmDeletePayment === payment.id ? (
+                        <span className="inline-flex items-center gap-3">
+                          <span className="text-gray-700">Supprimer ce paiement ?</span>
+                          <button
+                            type="button"
+                            className="text-red-600 hover:underline disabled:opacity-50"
+                            disabled={busy}
+                            onClick={() => handleDeletePayment(payment.id as number)}
+                          >
+                            Confirmer
+                          </button>
+                          <button
+                            type="button"
+                            className="text-gray-600 hover:underline"
+                            onClick={() => setConfirmDeletePayment(null)}
+                          >
+                            Annuler
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="text-red-600 hover:underline disabled:opacity-50"
+                          disabled={busy}
+                          title="Supprimer un paiement saisi par erreur"
+                          onClick={() => setConfirmDeletePayment(payment.id as number)}
+                        >
+                          Supprimer
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          {creditNotes.length > 0 && (
+            <>
+              <h3 className="font-semibold text-gray-900 mt-6 mb-2">Avoirs liés</h3>
+              <ul className="divide-y divide-gray-100 text-sm">
+                {creditNotes.map((cn) => (
+                  <li key={cn.id} className="py-2 flex flex-wrap items-center justify-between gap-3">
+                    <span className="flex items-center gap-3">
+                      <Link
+                        to={`/invoices/${cn.id}`}
+                        className="text-blue-600 hover:underline font-medium"
+                      >
+                        {cn.status === 'draft' ? 'Avoir en brouillon' : cn.invoice_number}
+                      </Link>
+                      <span className="text-gray-600">{formatDate(cn.invoice_date)}</span>
+                      <StatusBadge status={cn.status} invoiceType="credit_note" />
+                    </span>
+                    <span className="font-medium text-orange-700 whitespace-nowrap">
+                      − {formatAmount(cn.total_amount)}
+                      {cn.status === 'draft' && (
+                        <span className="text-gray-500 font-normal"> (non émis, sans effet)</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Form */}
       <div className="bg-white rounded-lg shadow p-6">
@@ -570,12 +975,12 @@ const InvoiceForm = () => {
             {/* Invoice Info */}
             <div>
               <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                Informations de la facture
+                {creditNote ? "Informations de l'avoir" : 'Informations de la facture'}
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Numéro de facture
+                    {creditNote ? "Numéro de l'avoir" : 'Numéro de facture'}
                   </label>
                   <input
                     type="text"
@@ -588,23 +993,29 @@ const InvoiceForm = () => {
                   {!readOnly && (
                     <p className="text-xs text-gray-500 mt-1">
                       Le numéro définitif est attribué automatiquement lors de la finalisation
-                      (numérotation continue).
+                      (numérotation continue{creditNote ? ', série AV propre aux avoirs' : ''}).
                     </p>
                   )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2" htmlFor="invoice-date">
-                    Date de facture *
+                    {creditNote ? "Date de l'avoir *" : 'Date de facture *'}
                   </label>
                   <input
                     id="invoice-date"
                     type="date"
                     className={inputClass(Boolean(errors.invoiceDate))}
                     value={invoiceDate}
+                    min={
+                      creditNote && originalInvoice
+                        ? originalInvoice.invoice_date.slice(0, 10)
+                        : undefined
+                    }
                     onChange={(e) => handleInvoiceDateChange(e.target.value)}
                   />
                   <FieldError message={errors.invoiceDate} />
                 </div>
+                {!creditNote && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2" htmlFor="due-date">
                     Date d'échéance
@@ -619,6 +1030,8 @@ const InvoiceForm = () => {
                   />
                   <FieldError message={errors.dueDate} />
                 </div>
+                )}
+                {!creditNote && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2" htmlFor="payment-terms">
                     Délai de paiement (jours)
@@ -634,6 +1047,7 @@ const InvoiceForm = () => {
                   />
                   <FieldError message={errors.paymentTerms} />
                 </div>
+                )}
               </div>
               {readOnly && invoice && (
                 <dl className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 text-sm text-gray-700">
@@ -649,7 +1063,7 @@ const InvoiceForm = () => {
                       <dd>{formatDate(invoice.sent_at)}</dd>
                     </div>
                   )}
-                  {(invoice.status === 'paid' || lastPayment) && (
+                  {!creditNote && (invoice.status === 'paid' || lastPayment) && (
                     <div>
                       <dt className="font-medium">
                         {invoice.status === 'paid' ? 'Payée le' : 'Dernier paiement le'}
@@ -670,7 +1084,7 @@ const InvoiceForm = () => {
               <h2 className="text-xl font-semibold text-gray-900 mb-4">Client</h2>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2" htmlFor="customer">
-                  Sélectionner un client *
+                  {creditNote ? "Client (celui de la facture d'origine)" : 'Sélectionner un client *'}
                 </label>
                 <select
                   id="customer"
@@ -680,7 +1094,7 @@ const InvoiceForm = () => {
                     setCustomerId(e.target.value ? Number(e.target.value) : '');
                     setErrors((current) => ({ ...current, customer: undefined }));
                   }}
-                  disabled={loadingCustomers}
+                  disabled={loadingCustomers || creditNote}
                 >
                   <option value="">-- Choisir un client --</option>
                   {customers.map((customer) => (
@@ -883,9 +1297,22 @@ const InvoiceForm = () => {
                     <span className="font-medium">{formatAmount(shownTotals.tax)}</span>
                   </div>
                   <div className="flex justify-between text-lg font-bold text-gray-900 pt-2 border-t border-blue-300">
-                    <span>Total TTC :</span>
+                    <span>{creditNote ? "Total TTC de l'avoir :" : 'Total TTC :'}</span>
                     <span>{formatAmount(shownTotals.total)}</span>
                   </div>
+                  {creditLimit !== null && originalInvoice && (
+                    <p
+                      role={exceedsCreditLimit ? 'alert' : undefined}
+                      className={`text-sm pt-2 ${
+                        exceedsCreditLimit ? 'text-red-700 font-medium' : 'text-gray-700'
+                      }`}
+                    >
+                      Montant restant à créditer sur la facture {originalInvoice.invoice_number} :{' '}
+                      {formatAmount(creditLimit)}.
+                      {exceedsCreditLimit &&
+                        " L'avoir dépasse ce montant : réduisez les quantités ou supprimez des lignes."}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -919,8 +1346,9 @@ const InvoiceForm = () => {
             ) : confirmFinalize ? (
               <>
                 <span className="text-sm text-gray-700">
-                  Finaliser ? Un numéro définitif sera attribué et la facture ne sera plus
-                  modifiable.
+                  {creditNote
+                    ? "Émettre cet avoir ? Un numéro définitif sera attribué, il ne sera plus modifiable et le solde de la facture d'origine sera réduit."
+                    : 'Finaliser ? Un numéro définitif sera attribué et la facture ne sera plus modifiable.'}
                 </span>
                 <button
                   type="button"
@@ -955,7 +1383,7 @@ const InvoiceForm = () => {
                   className="px-6 py-2 border border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-colors disabled:opacity-50"
                   disabled={saving}
                 >
-                  Enregistrer et finaliser
+                  {creditNote ? "Enregistrer et émettre l'avoir" : 'Enregistrer et finaliser'}
                 </button>
                 <button
                   type="submit"
